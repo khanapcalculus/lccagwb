@@ -30,7 +30,11 @@ const TutorDashboard = () => {
 
     const qStudents = query(collection(db, 'users'), where('role', '==', 'student'));
     const unsubStudents = onSnapshot(qStudents, snap => {
-      setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      // Filter locally to avoid needing a complex composite index for role+assignedTutorId right now
+      const myStudents = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(s => s.assignedTutorId === user.uid);
+      setStudents(myStudents);
     });
 
     return () => { unsub(); unsubStudents(); };

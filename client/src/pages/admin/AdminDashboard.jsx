@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import ActivityFeed from '../../components/ActivityFeed';
@@ -46,6 +46,15 @@ const AdminDashboard = () => {
   const scheduled = sessions.filter(s => s.status === 'scheduled').length;
   const completed = sessions.filter(s => s.status === 'completed').length;
   const cancelled = sessions.filter(s => s.status === 'cancelled').length;
+
+  const handleAssignTutor = async (studentId, tutorId) => {
+    try {
+      await updateDoc(doc(db, 'users', studentId), { assignedTutorId: tutorId || null });
+    } catch (error) {
+      console.error('Error assigning tutor:', error);
+      alert('Failed to assign tutor');
+    }
+  };
 
   // Chart data
   const sessionStatusData = {
@@ -166,7 +175,7 @@ const AdminDashboard = () => {
           <div className="table-wrapper">
             <table>
               <thead><tr>
-                <th>Name</th><th>Email</th><th>Role</th><th>Joined</th>
+                <th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th>Assigned Tutor</th>
               </tr></thead>
               <tbody>
                 {users.map(u => (
@@ -175,6 +184,21 @@ const AdminDashboard = () => {
                     <td>{u.email}</td>
                     <td><span className={`badge badge-${u.role}`}>{u.role}</span></td>
                     <td>{u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : '—'}</td>
+                    <td>
+                      {u.role === 'student' ? (
+                        <select 
+                          className="form-input" 
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: 'var(--bg-card)' }}
+                          value={u.assignedTutorId || ''}
+                          onChange={(e) => handleAssignTutor(u.id, e.target.value)}
+                        >
+                          <option value="">Unassigned</option>
+                          {users.filter(t => t.role === 'tutor').map(tutor => (
+                            <option key={tutor.id} value={tutor.id}>{tutor.displayName || tutor.email}</option>
+                          ))}
+                        </select>
+                      ) : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
