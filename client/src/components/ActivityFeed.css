@@ -1,0 +1,29 @@
+/* Activity Feed Styles */
+.activity-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.activity-item {
+  display: flex;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  animation: fadeIn 0.3s ease;
+}
+.activity-item:last-child { border-bottom: none; }
+
+.activity-icon-wrap {
+  width: 36px; height: 36px;
+  border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.activity-icon { font-size: 1rem; }
+
+.activity-content { display: flex; flex-direction: column; gap: 0.15rem; flex: 1; min-width: 0; }
+.activity-type { font-size: 0.8rem; font-weight: 600; }
+.activity-detail { font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.activity-time { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }

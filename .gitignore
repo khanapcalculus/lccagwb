@@ -1,0 +1,53 @@
+# ==========================================
+# LCC AGW Whiteboard Platform — .gitignore
+# ==========================================
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment Variables — NEVER commit these
+.env
+.env.local
+.env.*.local
+server/.env
+client/.env
+client/.env.local
+
+# Build outputs
+client/dist/
+client/build/
+server/dist/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Vite
+vite.config.js.timestamp-*
+
+# Service account key (if downloaded)
+*-service-account.json
+serviceAccountKey.json
