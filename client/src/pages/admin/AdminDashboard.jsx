@@ -40,12 +40,14 @@ const AdminDashboard = () => {
   }, []);
 
   const { users, sessions, activities } = stats;
-  const admins = users.filter(u => u.role === 'admin').length;
-  const tutors = users.filter(u => u.role === 'tutor').length;
+  const admins = users.filter(u => u.role?.toLowerCase() === 'admin').length;
+  const tutors = users.filter(u => u.role?.toLowerCase() === 'tutor').length;
   const students = users.filter(u => u.role === 'student').length;
   const scheduled = sessions.filter(s => s.status === 'scheduled').length;
   const completed = sessions.filter(s => s.status === 'completed').length;
   const cancelled = sessions.filter(s => s.status === 'cancelled').length;
+
+  const availableTutors = users.filter(u => u.role?.toLowerCase().trim() === 'tutor');
 
   const handleAssignTutor = async (studentId, tutorId) => {
     try {
@@ -185,16 +187,18 @@ const AdminDashboard = () => {
                     <td><span className={`badge badge-${u.role}`}>{u.role}</span></td>
                     <td>{u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : '—'}</td>
                     <td>
-                      {u.role === 'student' ? (
+                      {u.role?.toLowerCase() === 'student' ? (
                         <select 
                           className="form-input" 
-                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: 'var(--bg-card)' }}
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#1a1f3c', color: '#ffffff', borderColor: '#3b426e' }}
                           value={u.assignedTutorId || ''}
                           onChange={(e) => handleAssignTutor(u.id, e.target.value)}
                         >
-                          <option value="">Unassigned</option>
-                          {users.filter(t => t.role === 'tutor').map(tutor => (
-                            <option key={tutor.id} value={tutor.id}>{tutor.displayName || tutor.email}</option>
+                          <option value="" style={{ color: '#ffffff' }}>Unassigned</option>
+                          {availableTutors.map(tutor => (
+                            <option key={tutor.id} value={tutor.id} style={{ color: '#ffffff', fontWeight: 'bold' }}>
+                              {tutor.displayName ? tutor.displayName : tutor.email ? tutor.email : 'Unnamed Tutor'}
+                            </option>
                           ))}
                         </select>
                       ) : '—'}
