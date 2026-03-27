@@ -25,6 +25,7 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
   const [savingId, setSavingId] = useState(null);
+  const [savingRoleId, setSavingRoleId] = useState(null);
   const [toast, setToast] = useState(null);
 
   const showToast = (msg, type = 'success') => {
@@ -70,6 +71,24 @@ const AdminDashboard = () => {
       showToast('Failed to assign tutor: ' + error.message, 'error');
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const handleRoleChange = async (userId, nextRole) => {
+    setSavingRoleId(userId);
+    try {
+      const updates = { role: nextRole };
+      if (nextRole !== 'student') {
+        updates.assignedTutorId = null;
+        updates.assignedTutorName = null;
+      }
+      await updateDoc(doc(db, 'users', userId), updates);
+      showToast(`User role updated to ${nextRole}.`);
+    } catch (error) {
+      console.error('Error updating role:', error);
+      showToast('Failed to update role: ' + error.message, 'error');
+    } finally {
+      setSavingRoleId(null);
     }
   };
 
@@ -208,7 +227,24 @@ const AdminDashboard = () => {
                   <tr key={u.id}>
                     <td><strong style={{ color: 'var(--text-primary)' }}>{u.displayName || '—'}</strong></td>
                     <td>{u.email}</td>
-                    <td><span className={`badge badge-${u.role}`}>{u.role}</span></td>
+                    <td>
+                      <select
+                        className="form-input"
+                        style={{
+                          minWidth: '140px',
+                          padding: '0.55rem 0.75rem',
+                          fontSize: '0.85rem',
+                          background: 'var(--bg-elevated)',
+                        }}
+                        value={u.role || 'student'}
+                        onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                        disabled={savingRoleId === u.id || u.id === userProfile?.uid}
+                      >
+                        <option value="student">Student</option>
+                        <option value="tutor">Tutor</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
                     <td>{u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : '—'}</td>
                     <td>
                       {u.role?.toLowerCase() === 'student' ? (
