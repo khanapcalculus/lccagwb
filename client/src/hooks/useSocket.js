@@ -10,11 +10,12 @@ export const useSocket = (namespace = '/whiteboard') => {
   const connect = useCallback(() => {
     if (!socketRef.current || !socketRef.current.connected) {
       socketInstance = io(`${SERVER_URL}${namespace}`, {
-        transports: ['websocket', 'polling'],
+        transports: ['polling', 'websocket'],
         autoConnect: true,
         reconnection: true,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: 10,
         reconnectionDelay: 1000,
+        timeout: 20000,
       });
       socketRef.current = socketInstance;
     }

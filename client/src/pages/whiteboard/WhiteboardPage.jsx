@@ -541,7 +541,14 @@ const WhiteboardPage = () => {
   useEffect(() => {
     if (!user || !roomId) return;
 
-    const socket = io(`${SERVER_URL}/whiteboard`, { transports: ['websocket', 'polling'] });
+    const socket = io(`${SERVER_URL}/whiteboard`, {
+      transports: ['polling', 'websocket'],
+      autoConnect: true,
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      timeout: 20000,
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
