@@ -93,6 +93,17 @@
   display: flex; align-items: center; justify-content: center;
 }
 .wb-action-btn:hover { background: var(--cyan-glow); border-color: var(--border-bright); }
+.wb-action-btn.wide {
+  width: auto;
+  padding: 0 0.75rem;
+  font-size: 0.8rem;
+  gap: 0.35rem;
+}
+.wb-action-btn.danger:hover {
+  background: rgba(239,68,68,0.12);
+  border-color: rgba(239,68,68,0.35);
+  color: var(--red);
+}
 
 /* ── Main Area ────────────────────────────────────────────────── */
 .wb-main {

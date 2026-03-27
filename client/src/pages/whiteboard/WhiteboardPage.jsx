@@ -27,7 +27,7 @@ const WhiteboardPage = () => {
   const navigate = useNavigate();
 
   const canvasRef = useRef(null);
-  const overlayRef = useRef(null);
+  const fileInputRef = useRef(null);
   const socketRef = useRef(null);
   const isDrawing = useRef(false);
   const isPanning = useRef(false);
@@ -36,6 +36,8 @@ const WhiteboardPage = () => {
   const strokes = useRef([]);
   const history = useRef([]);
   const panState = useRef({ pointer: { x: 0, y: 0 }, offset: { x: 0, y: 0 } });
+  const imageCache = useRef(new Map());
+  const redrawAllRef = useRef(() => {});
 
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#00d4ff');
@@ -53,6 +55,7 @@ const WhiteboardPage = () => {
 
   // ── Canvas utils ──────────────────────────────────────────────
   const getCtx = () => canvasRef.current?.getContext('2d');
+  const isTouchEvent = (e) => 'touches' in e || 'changedTouches' in e;
 
   const getPointerClientPos = (e) => ({
     x: e.touches ? e.touches[0].clientX : e.clientX,
@@ -79,8 +82,71 @@ const WhiteboardPage = () => {
     ctx.lineWidth = s.width || 4;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.globalCompositeOperation = s.tool === 'eraser' ? 'destination-out' : 'source-over';
+    ctx.globalCompositeOperation = 'source-over';
   };
+
+  const distanceToSegment = (point, start, end) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    if (dx === 0 && dy === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+    const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)));
+    const proj = { x: start.x + t * dx, y: start.y + t * dy };
+    return Math.hypot(point.x - proj.x, point.y - proj.y);
+  };
+
+  const doesStrokeHitPoint = useCallback((stroke, point) => {
+    const tolerance = Math.max(10, (stroke.width || 4) * 2);
+    if (!stroke?.points?.length) return false;
+
+    if (stroke.tool === 'pen' || stroke.tool === 'eraser') {
+      for (let i = 1; i < stroke.points.length; i += 1) {
+        if (distanceToSegment(point, stroke.points[i - 1], stroke.points[i]) <= tolerance) return true;
+      }
+      return Math.hypot(point.x - stroke.points[0].x, point.y - stroke.points[0].y) <= tolerance;
+    }
+
+    if (stroke.tool === 'line' && stroke.points.length >= 2) {
+      return distanceToSegment(point, stroke.points[0], stroke.points[stroke.points.length - 1]) <= tolerance;
+    }
+
+    if (stroke.tool === 'rect' && stroke.points.length >= 2) {
+      const [start, end] = [stroke.points[0], stroke.points[stroke.points.length - 1]];
+      const left = Math.min(start.x, end.x);
+      const right = Math.max(start.x, end.x);
+      const top = Math.min(start.y, end.y);
+      const bottom = Math.max(start.y, end.y);
+      return point.x >= left - tolerance && point.x <= right + tolerance && point.y >= top - tolerance && point.y <= bottom + tolerance;
+    }
+
+    if (stroke.tool === 'circle' && stroke.points.length >= 2) {
+      const [start, end] = [stroke.points[0], stroke.points[stroke.points.length - 1]];
+      const cx = start.x + (end.x - start.x) / 2;
+      const cy = start.y + (end.y - start.y) / 2;
+      const rx = Math.max(1, Math.abs(end.x - start.x) / 2);
+      const ry = Math.max(1, Math.abs(end.y - start.y) / 2);
+      const normalized = (((point.x - cx) ** 2) / (rx ** 2)) + (((point.y - cy) ** 2) / (ry ** 2));
+      return normalized <= 1.15;
+    }
+
+    if (stroke.tool === 'text' && stroke.text) {
+      const fontSize = (stroke.width || 4) * 4 + 12;
+      const textWidth = stroke.text.length * fontSize * 0.6;
+      return point.x >= stroke.points[0].x - tolerance
+        && point.x <= stroke.points[0].x + textWidth + tolerance
+        && point.y <= stroke.points[0].y + tolerance
+        && point.y >= stroke.points[0].y - fontSize - tolerance;
+    }
+
+    if (stroke.tool === 'image' && stroke.points[0]) {
+      const { x, y } = stroke.points[0];
+      return point.x >= x - tolerance
+        && point.x <= x + (stroke.imageWidth || 0) + tolerance
+        && point.y >= y - tolerance
+        && point.y <= y + (stroke.imageHeight || 0) + tolerance;
+    }
+
+    return false;
+  }, []);
 
   const drawStroke = useCallback((ctx, stroke) => {
     if (!stroke?.points?.length) return;
@@ -106,6 +172,23 @@ const WhiteboardPage = () => {
       ctx.fillStyle = stroke.color;
       ctx.font = `${stroke.width * 4 + 12}px Inter, sans-serif`;
       ctx.fillText(stroke.text, stroke.points[0].x, stroke.points[0].y);
+    } else if (stroke.tool === 'image' && stroke.src) {
+      let img = imageCache.current.get(stroke.src);
+      if (!img) {
+        img = new Image();
+        img.onload = () => redrawAllRef.current();
+        img.src = stroke.src;
+        imageCache.current.set(stroke.src, img);
+      }
+      if (img.complete) {
+        ctx.drawImage(
+          img,
+          stroke.points[0].x,
+          stroke.points[0].y,
+          stroke.imageWidth || img.width,
+          stroke.imageHeight || img.height
+        );
+      }
     }
   }, []);
 
@@ -119,6 +202,7 @@ const WhiteboardPage = () => {
     ctx.globalCompositeOperation = 'source-over';
     strokes.current.forEach(s => drawStroke(ctx, s));
   }, [configureCtx, drawStroke]);
+  redrawAllRef.current = redrawAll;
 
   // ── Resize canvas ─────────────────────────────────────────────
   useEffect(() => {
@@ -222,12 +306,25 @@ const WhiteboardPage = () => {
   // ── Drawing handlers ──────────────────────────────────────────
   const startDrawing = (e) => {
     e.preventDefault();
+    if (isTouchEvent(e) && tool !== 'pan') return;
     if (tool === 'pan') {
       isPanning.current = true;
       panState.current = {
         pointer: getPointerClientPos(e),
         offset: viewportOffset,
       };
+      return;
+    }
+    if (tool === 'eraser') {
+      const pos = getPos(e);
+      const hitStroke = [...strokes.current].reverse().find(stroke => doesStrokeHitPoint(stroke, pos));
+      if (hitStroke) {
+        const nextStrokes = strokes.current.filter(stroke => stroke.id !== hitStroke.id);
+        strokes.current = nextStrokes;
+        history.current = nextStrokes;
+        redrawAll();
+        socketRef.current?.emit('delete-stroke', { strokeId: hitStroke.id });
+      }
       return;
     }
     if (tool === 'text') {
@@ -253,6 +350,7 @@ const WhiteboardPage = () => {
       });
       return;
     }
+    if (isTouchEvent(e)) return;
     if (!isDrawing.current) {
       // Send cursor position
       const pos = getPos(e);
@@ -345,6 +443,53 @@ const WhiteboardPage = () => {
     navigator.clipboard.writeText(window.location.href);
   };
 
+  const handleImageButtonClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImageUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = reader.result;
+      if (typeof src !== 'string') return;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        const viewportWidth = canvas?.getBoundingClientRect().width || 800;
+        const viewportHeight = canvas?.getBoundingClientRect().height || 600;
+        const maxWidth = Math.min(420, viewportWidth * 0.6);
+        const maxHeight = Math.min(320, viewportHeight * 0.6);
+        const scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
+        const imageWidth = img.width * scale;
+        const imageHeight = img.height * scale;
+        const stroke = {
+          tool: 'image',
+          src,
+          imageWidth,
+          imageHeight,
+          points: [{
+            x: (viewportWidth - imageWidth) / 2 - viewportOffset.x,
+            y: (viewportHeight - imageHeight) / 2 - viewportOffset.y,
+          }],
+          uid: user.uid,
+          id: Date.now(),
+        };
+        imageCache.current.set(src, img);
+        strokes.current.push(stroke);
+        history.current.push(stroke);
+        redrawAll();
+        socketRef.current?.emit('add-shape', stroke);
+        showTextInput && setShowTextInput(false);
+      };
+      img.src = src;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   return (
     <div className="wb-container">
       {/* Top Bar */}
@@ -376,9 +521,12 @@ const WhiteboardPage = () => {
             ))}
             {participants.length > 4 && <div className="wb-avatar wb-avatar-more">+{participants.length - 4}</div>}
           </div>
+          <button className="wb-action-btn wide" onClick={handleImageButtonClick} title="Upload image">🖼 Upload</button>
+          <button className="wb-action-btn wide danger" onClick={handleClear} title="Clear canvas">🗑 Clear</button>
           <button className="wb-action-btn" onClick={handleCopyLink} title="Copy link">🔗</button>
           <button className="wb-action-btn" onClick={handleSave} title="Save to cloud">💾</button>
           <button className="wb-action-btn" onClick={handleExport} title="Export PNG">⬇️</button>
+          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageUpload} />
         </div>
       </div>
 
@@ -466,7 +614,7 @@ const WhiteboardPage = () => {
             onTouchStart={startDrawing}
             onTouchMove={draw}
             onTouchEnd={stopDrawing}
-            style={{ cursor: tool === 'pan' ? (isPanning.current ? 'grabbing' : 'grab') : tool === 'eraser' ? 'cell' : tool === 'text' ? 'text' : 'crosshair' }}
+            style={{ cursor: tool === 'pan' ? (isPanning.current ? 'grabbing' : 'grab') : tool === 'eraser' ? 'not-allowed' : tool === 'text' ? 'text' : 'crosshair' }}
           />
 
           {/* Live Cursors */}

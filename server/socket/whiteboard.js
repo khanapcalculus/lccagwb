@@ -115,6 +115,15 @@ module.exports = (io) => {
       }
     });
 
+    socket.on('delete-stroke', ({ strokeId }) => {
+      if (!currentRoom || !strokeId) return;
+      const room = rooms.get(currentRoom);
+      if (room) {
+        room.strokes = room.strokes.filter(stroke => stroke.id !== strokeId);
+        whiteboard.to(currentRoom).emit('canvas-redraw', { strokes: room.strokes });
+      }
+    });
+
     // Save canvas to Firestore
     socket.on('save-canvas', async ({ canvasData }) => {
       if (!currentRoom) return;
