@@ -523,24 +523,30 @@ const WhiteboardPage = () => {
     }
 
     const rect = canvas.getBoundingClientRect();
+    const viewportWidth = window.visualViewport?.width || window.innerWidth;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    const effectiveLeft = Math.max(rect.left, 0);
+    const effectiveTop = Math.max(rect.top, 0);
+    const effectiveRight = Math.min(rect.right, viewportWidth);
+    const effectiveBottom = Math.min(rect.bottom, viewportHeight);
     const threshold = 72;
     const maxSpeed = 220;
     let vx = 0;
     let vy = 0;
 
-    if (clientPos.x - rect.left < threshold) {
-      const intensity = (threshold - (clientPos.x - rect.left)) / threshold;
+    if (clientPos.x - effectiveLeft < threshold) {
+      const intensity = (threshold - (clientPos.x - effectiveLeft)) / threshold;
       vx = maxSpeed * intensity * intensity;
-    } else if (rect.right - clientPos.x < threshold) {
-      const intensity = (threshold - (rect.right - clientPos.x)) / threshold;
+    } else if (effectiveRight - clientPos.x < threshold) {
+      const intensity = (threshold - (effectiveRight - clientPos.x)) / threshold;
       vx = -maxSpeed * intensity * intensity;
     }
 
-    if (clientPos.y - rect.top < threshold) {
-      const intensity = (threshold - (clientPos.y - rect.top)) / threshold;
+    if (clientPos.y - effectiveTop < threshold) {
+      const intensity = (threshold - (clientPos.y - effectiveTop)) / threshold;
       vy = maxSpeed * intensity * intensity;
-    } else if (rect.bottom - clientPos.y < threshold) {
-      const intensity = (threshold - (rect.bottom - clientPos.y)) / threshold;
+    } else if (effectiveBottom - clientPos.y < threshold) {
+      const intensity = (threshold - (effectiveBottom - clientPos.y)) / threshold;
       vy = -maxSpeed * intensity * intensity;
     }
 
