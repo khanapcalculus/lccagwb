@@ -131,8 +131,10 @@ a:hover { color: var(--cyan-dim); }
   inset: 0;
   background: var(--gradient-card);
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--transition);
 }
+.card > * { position: relative; z-index: 1; }
 .card:hover { border-color: var(--border-bright); transform: translateY(-2px); box-shadow: var(--shadow-cyan); }
 .card:hover::before { opacity: 1; }
 
