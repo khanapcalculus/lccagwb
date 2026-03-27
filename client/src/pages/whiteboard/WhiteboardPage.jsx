@@ -55,12 +55,19 @@ const WhiteboardPage = () => {
 
   // ── Canvas utils ──────────────────────────────────────────────
   const getCtx = () => canvasRef.current?.getContext('2d');
-  const isTouchEvent = (e) => 'touches' in e || 'changedTouches' in e;
 
   const getPointerClientPos = (e) => ({
     x: e.touches ? e.touches[0].clientX : e.clientX,
     y: e.touches ? e.touches[0].clientY : e.clientY,
   });
+
+  const getInputType = (e) => {
+    if ('pointerType' in e && e.pointerType) return e.pointerType;
+    if ('touches' in e || 'changedTouches' in e) return 'touch';
+    return 'mouse';
+  };
+
+  const isDirectTouchInput = (e) => getInputType(e) === 'touch';
 
   const getPos = (e) => {
     const canvas = canvasRef.current;
@@ -337,7 +344,10 @@ const WhiteboardPage = () => {
   // ── Drawing handlers ──────────────────────────────────────────
   const startDrawing = (e) => {
     e.preventDefault();
-    if (isTouchEvent(e) && tool !== 'pan') return;
+    if (isDirectTouchInput(e) && tool !== 'pan') return;
+    if ('pointerId' in e) {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    }
     if (tool === 'pan') {
       isPanning.current = true;
       panState.current = {
@@ -381,7 +391,7 @@ const WhiteboardPage = () => {
       });
       return;
     }
-    if (isTouchEvent(e)) return;
+    if (isDirectTouchInput(e)) return;
     if (!isDrawing.current) {
       // Send cursor position
       const pos = getPos(e);
@@ -412,6 +422,9 @@ const WhiteboardPage = () => {
   };
 
   const stopDrawing = (e) => {
+    if ('pointerId' in e) {
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    }
     if (isPanning.current) {
       isPanning.current = false;
       return;
@@ -640,13 +653,11 @@ const WhiteboardPage = () => {
           <canvas
             ref={canvasRef}
             className="wb-canvas"
-            onMouseDown={startDrawing}
-            onMouseMove={draw}
-            onMouseUp={stopDrawing}
-            onMouseLeave={stopDrawing}
-            onTouchStart={startDrawing}
-            onTouchMove={draw}
-            onTouchEnd={stopDrawing}
+            onPointerDown={startDrawing}
+            onPointerMove={draw}
+            onPointerUp={stopDrawing}
+            onPointerLeave={stopDrawing}
+            onPointerCancel={stopDrawing}
             style={{ cursor: tool === 'pan' ? (isPanning.current ? 'grabbing' : 'grab') : tool === 'eraser' ? 'not-allowed' : tool === 'text' ? 'text' : 'crosshair' }}
           />
 
