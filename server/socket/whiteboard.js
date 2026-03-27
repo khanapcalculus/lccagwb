@@ -153,7 +153,7 @@ module.exports = (io) => {
     // Cursor position (for live cursor tracking)
     socket.on('cursor-move', (data) => {
       if (!currentRoom) return;
-      socket.to(currentRoom).emit('cursor-move', { ...data, socketId: socket.id });
+      socket.to(currentRoom).emit('cursor-move', { ...data, socketId: socket.id, uid: currentUser?.uid });
     });
 
     // Disconnect
@@ -164,6 +164,7 @@ module.exports = (io) => {
         room.participants = room.participants.filter(p => p.socketId !== socket.id);
         whiteboard.to(currentRoom).emit('user-left', {
           uid: currentUser.uid,
+          socketId: socket.id,
           participants: room.participants,
         });
         if (room.participants.length === 0) {

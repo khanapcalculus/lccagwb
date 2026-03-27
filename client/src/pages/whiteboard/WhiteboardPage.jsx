@@ -602,17 +602,30 @@ const WhiteboardPage = () => {
       setConnected(true);
       socket.emit('join-room', { roomId, user: { uid: user.uid, displayName: userProfile?.displayName || user.email } });
     });
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('disconnect', () => {
+      setConnected(false);
+      setCursors({});
+    });
 
     socket.on('room-state', ({ strokes: savedStrokes, participants: p }) => {
       strokes.current = savedStrokes || [];
       history.current = savedStrokes || [];
       setParticipants(p || []);
+      setCursors({});
       redrawAllRef.current();
     });
 
     socket.on('user-joined', ({ participants: p }) => setParticipants(p || []));
-    socket.on('user-left', ({ participants: p }) => setParticipants(p || []));
+    socket.on('user-left', ({ participants: p, socketId }) => {
+      setParticipants(p || []);
+      if (socketId) {
+        setCursors(prev => {
+          const next = { ...prev };
+          delete next[socketId];
+          return next;
+        });
+      }
+    });
 
     socket.on('draw-move', ({ points, color: c, width: w, tool: t }) => {
       const ctx = getCtx();
@@ -666,8 +679,17 @@ const WhiteboardPage = () => {
       redrawAllRef.current();
     });
 
-    socket.on('cursor-move', ({ socketId, x, y, name }) => {
-      setCursors(prev => ({ ...prev, [socketId]: { x, y, name } }));
+    socket.on('cursor-move', ({ socketId, uid, x, y, name }) => {
+      setCursors(prev => {
+        const next = { ...prev };
+        if (uid) {
+          Object.entries(next).forEach(([id, cursor]) => {
+            if (cursor.uid === uid && id !== socketId) delete next[id];
+          });
+        }
+        next[socketId] = { x, y, name, uid };
+        return next;
+      });
     });
 
     socket.on('save-success', () => { setSaved(true); setTimeout(() => setSaved(false), 2000); });
