@@ -138,8 +138,6 @@ const WhiteboardPage = () => {
     setActivePalette(null);
   }, [tool]);
 
-  useEffect(() => () => stopAutoPan(), [stopAutoPan]);
-
   const configureCtx = useCallback((ctx) => {
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, viewportOffset.x * dpr, viewportOffset.y * dpr);
@@ -377,6 +375,8 @@ const WhiteboardPage = () => {
     }
     autoPanRef.current = { rafId: null, lastTs: null, vx: 0, vy: 0 };
   }, []);
+
+  useEffect(() => () => stopAutoPan(), [stopAutoPan]);
 
   const applySelectionDragAtPos = useCallback((pos, shouldEmit = true) => {
     const dx = pos.x - selectionDrag.current.origin.x;
