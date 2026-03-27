@@ -19,7 +19,7 @@ const TOOLS = [
 ];
 
 const COLORS = ['#00d4ff', '#ffffff', '#a78bfa', '#10b981', '#f59e0b', '#ef4444', '#f97316', '#ec4899', '#000000'];
-const STROKE_WIDTHS = [2, 4, 8, 14, 22];
+const STROKE_WIDTHS = [1, 2, 3, 4, 6, 8, 12, 18];
 
 const WhiteboardPage = () => {
   const { roomId } = useParams();
@@ -41,7 +41,7 @@ const WhiteboardPage = () => {
 
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#00d4ff');
-  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [strokeWidth, setStrokeWidth] = useState(2);
   const [participants, setParticipants] = useState([]);
   const [connected, setConnected] = useState(false);
   const [showTextInput, setShowTextInput] = useState(false);
@@ -84,6 +84,40 @@ const WhiteboardPage = () => {
     ctx.lineJoin = 'round';
     ctx.globalCompositeOperation = 'source-over';
   };
+
+  const drawSmoothPath = useCallback((ctx, points) => {
+    if (!points?.length) return;
+
+    if (points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(points[0].x, points[0].y, Math.max(ctx.lineWidth / 2, 1), 0, Math.PI * 2);
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+      return;
+    }
+
+    if (points.length === 2) {
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      ctx.lineTo(points[1].x, points[1].y);
+      ctx.stroke();
+      return;
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+
+    for (let i = 1; i < points.length - 1; i += 1) {
+      const midX = (points[i].x + points[i + 1].x) / 2;
+      const midY = (points[i].y + points[i + 1].y) / 2;
+      ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
+    }
+
+    const penultimate = points[points.length - 2];
+    const last = points[points.length - 1];
+    ctx.quadraticCurveTo(penultimate.x, penultimate.y, last.x, last.y);
+    ctx.stroke();
+  }, []);
 
   const distanceToSegment = (point, start, end) => {
     const dx = end.x - start.x;
@@ -153,10 +187,7 @@ const WhiteboardPage = () => {
     applyStrokeStyle(ctx, stroke);
 
     if (stroke.tool === 'pen' || stroke.tool === 'eraser') {
-      ctx.beginPath();
-      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-      stroke.points.forEach(p => ctx.lineTo(p.x, p.y));
-      ctx.stroke();
+      drawSmoothPath(ctx, stroke.points);
     } else if (stroke.tool === 'line' && stroke.points.length >= 2) {
       const [start, end] = [stroke.points[0], stroke.points[stroke.points.length - 1]];
       ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); ctx.stroke();
@@ -190,7 +221,7 @@ const WhiteboardPage = () => {
         );
       }
     }
-  }, []);
+  }, [drawSmoothPath]);
 
   const redrawAll = useCallback(() => {
     const ctx = getCtx();
@@ -360,12 +391,14 @@ const WhiteboardPage = () => {
     const pos = getPos(e);
     const ctx = getCtx();
 
-    if (tool === 'pen' || tool === 'eraser') {
+    if (tool === 'pen') {
+      currentStroke.current.push(pos);
+      lastPos.current = pos;
+      redrawAll();
       applyStrokeStyle(ctx, { color, width: strokeWidth, tool });
-      ctx.beginPath();
-      ctx.moveTo(lastPos.current.x, lastPos.current.y);
-      ctx.lineTo(pos.x, pos.y);
-      ctx.stroke();
+      drawSmoothPath(ctx, currentStroke.current);
+      socketRef.current?.emit('draw-move', { points: currentStroke.current.slice(-3), color, width: strokeWidth, tool });
+      return;
     } else {
       // For shapes: clear and redraw all, then draw preview
       redrawAll();
