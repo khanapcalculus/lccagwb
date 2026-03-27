@@ -46,7 +46,15 @@ const WhiteboardPage = () => {
   const selectionDrag = useRef({ active: false, strokeId: null, origin: null, snapshot: null, lastDelta: { x: 0, y: 0 } });
   const viewportOffsetRef = useRef({ x: 0, y: 0 });
   const pointerClientPosRef = useRef(null);
-  const autoPanRef = useRef({ rafId: null, lastTs: null, vx: 0, vy: 0 });
+  const autoPanRef = useRef({
+    rafId: null,
+    lastTs: null,
+    vx: 0,
+    vy: 0,
+    originOffset: null,
+    maxDx: 0,
+    maxDy: 0,
+  });
   const toolRef = useRef('pen');
   const colorRef = useRef('#00d4ff');
   const strokeWidthRef = useRef(2);
@@ -373,7 +381,15 @@ const WhiteboardPage = () => {
     if (autoPanRef.current.rafId) {
       cancelAnimationFrame(autoPanRef.current.rafId);
     }
-    autoPanRef.current = { rafId: null, lastTs: null, vx: 0, vy: 0 };
+    autoPanRef.current = {
+      rafId: null,
+      lastTs: null,
+      vx: 0,
+      vy: 0,
+      originOffset: null,
+      maxDx: 0,
+      maxDy: 0,
+    };
   }, []);
 
   useEffect(() => () => stopAutoPan(), [stopAutoPan]);
@@ -467,6 +483,28 @@ const WhiteboardPage = () => {
       x: viewportOffsetRef.current.x + state.vx * dt,
       y: viewportOffsetRef.current.y + state.vy * dt,
     };
+
+    if (state.originOffset) {
+      const minX = state.originOffset.x - state.maxDx;
+      const maxX = state.originOffset.x + state.maxDx;
+      const minY = state.originOffset.y - state.maxDy;
+      const maxY = state.originOffset.y + state.maxDy;
+      nextOffset.x = Math.min(maxX, Math.max(minX, nextOffset.x));
+      nextOffset.y = Math.min(maxY, Math.max(minY, nextOffset.y));
+
+      if ((nextOffset.x === minX || nextOffset.x === maxX) && state.vx) {
+        state.vx = 0;
+      }
+      if ((nextOffset.y === minY || nextOffset.y === maxY) && state.vy) {
+        state.vy = 0;
+      }
+    }
+
+    if (!state.vx && !state.vy) {
+      stopAutoPan();
+      return;
+    }
+
     viewportOffsetRef.current = nextOffset;
     setViewportOffset(nextOffset);
 
@@ -511,6 +549,9 @@ const WhiteboardPage = () => {
 
     if ((vx || vy) && !autoPanRef.current.rafId) {
       autoPanRef.current.lastTs = null;
+      autoPanRef.current.originOffset = { ...viewportOffsetRef.current };
+      autoPanRef.current.maxDx = rect.width * 0.2;
+      autoPanRef.current.maxDy = rect.height * 0.3;
       autoPanRef.current.rafId = requestAnimationFrame(stepAutoPan);
     } else if (!vx && !vy) {
       stopAutoPan();
@@ -1033,7 +1074,6 @@ const WhiteboardPage = () => {
             onPointerDown={startDrawing}
             onPointerMove={draw}
             onPointerUp={stopDrawing}
-            onPointerLeave={stopDrawing}
             onPointerCancel={stopDrawing}
             style={{ cursor: tool === 'pan' ? (isPanning.current ? 'grabbing' : 'grab') : tool === 'select' ? 'default' : tool === 'eraser' ? 'not-allowed' : tool === 'text' ? 'text' : 'crosshair' }}
           />
