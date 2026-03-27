@@ -32,6 +32,7 @@ const WhiteboardPage = () => {
 
   const canvasRef = useRef(null);
   const fileInputRef = useRef(null);
+  const toolbarRef = useRef(null);
   const socketRef = useRef(null);
   const isDrawing = useRef(false);
   const isPanning = useRef(false);
@@ -42,7 +43,7 @@ const WhiteboardPage = () => {
   const panState = useRef({ pointer: { x: 0, y: 0 }, offset: { x: 0, y: 0 } });
   const imageCache = useRef(new Map());
   const redrawAllRef = useRef(() => {});
-  const selectionDrag = useRef({ active: false, strokeId: null, origin: null, snapshot: null });
+  const selectionDrag = useRef({ active: false, strokeId: null, origin: null, snapshot: null, lastDelta: { x: 0, y: 0 } });
 
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#00d4ff');
@@ -58,6 +59,7 @@ const WhiteboardPage = () => {
   const [viewportOffset, setViewportOffset] = useState({ x: 0, y: 0 });
   const [theme, setTheme] = useState(() => localStorage.getItem('whiteboard-theme') || 'dark');
   const [selectedStrokeId, setSelectedStrokeId] = useState(null);
+  const [activePalette, setActivePalette] = useState(null);
 
   // ── Canvas utils ──────────────────────────────────────────────
   const getCtx = () => canvasRef.current?.getContext('2d');
@@ -88,6 +90,21 @@ const WhiteboardPage = () => {
   useEffect(() => {
     localStorage.setItem('whiteboard-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (!toolbarRef.current?.contains(event.target)) {
+        setActivePalette(null);
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => window.removeEventListener('pointerdown', handlePointerDown);
+  }, []);
+
+  useEffect(() => {
+    setActivePalette(null);
+  }, [tool]);
 
   const configureCtx = useCallback((ctx) => {
     const dpr = window.devicePixelRatio || 1;
@@ -406,6 +423,15 @@ const WhiteboardPage = () => {
       redrawAll();
     });
 
+    socket.on('stroke-moved', ({ strokeId, dx, dy }) => {
+      if (!strokeId || (!dx && !dy)) return;
+      strokes.current = strokes.current.map((stroke) => (
+        stroke.id === strokeId ? translateStroke(stroke, dx, dy) : stroke
+      ));
+      history.current = strokes.current;
+      redrawAll();
+    });
+
     socket.on('cursor-move', ({ socketId, x, y, name }) => {
       setCursors(prev => ({ ...prev, [socketId]: { x, y, name } }));
     });
@@ -445,9 +471,10 @@ const WhiteboardPage = () => {
           strokeId: hitStroke.id,
           origin: pos,
           snapshot: hitStroke,
+          lastDelta: { x: 0, y: 0 },
         };
       } else {
-        selectionDrag.current = { active: false, strokeId: null, origin: null, snapshot: null };
+        selectionDrag.current = { active: false, strokeId: null, origin: null, snapshot: null, lastDelta: { x: 0, y: 0 } };
       }
       redrawAll();
       return;
@@ -491,13 +518,23 @@ const WhiteboardPage = () => {
       const pos = getPos(e);
       const dx = pos.x - selectionDrag.current.origin.x;
       const dy = pos.y - selectionDrag.current.origin.y;
+      const deltaDx = dx - selectionDrag.current.lastDelta.x;
+      const deltaDy = dy - selectionDrag.current.lastDelta.y;
       strokes.current = strokes.current.map((stroke) => (
         stroke.id === selectionDrag.current.strokeId
           ? translateStroke(selectionDrag.current.snapshot, dx, dy)
           : stroke
       ));
       history.current = strokes.current;
+      selectionDrag.current.lastDelta = { x: dx, y: dy };
       redrawAll();
+      if (deltaDx || deltaDy) {
+        socketRef.current?.emit('move-stroke', {
+          strokeId: selectionDrag.current.strokeId,
+          dx: deltaDx,
+          dy: deltaDy,
+        });
+      }
       return;
     }
     if (isDirectTouchInput(e)) return;
@@ -539,11 +576,7 @@ const WhiteboardPage = () => {
       return;
     }
     if (tool === 'select') {
-      if (selectionDrag.current.active && selectionDrag.current.strokeId) {
-        const movedStroke = strokes.current.find((stroke) => stroke.id === selectionDrag.current.strokeId);
-        if (movedStroke) socketRef.current?.emit('move-stroke', { stroke: movedStroke });
-      }
-      selectionDrag.current = { active: false, strokeId: null, origin: null, snapshot: null };
+      selectionDrag.current = { active: false, strokeId: null, origin: null, snapshot: null, lastDelta: { x: 0, y: 0 } };
       return;
     }
     if (!isDrawing.current) return;
@@ -608,6 +641,21 @@ const WhiteboardPage = () => {
 
   const handleAssetButtonClick = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleToolSelect = (nextTool) => {
+    setTool(nextTool);
+    setActivePalette(null);
+  };
+
+  const handleColorSelect = (nextColor) => {
+    setColor(nextColor);
+    setActivePalette(null);
+  };
+
+  const handleStrokeWidthSelect = (nextWidth) => {
+    setStrokeWidth(nextWidth);
+    setActivePalette(null);
   };
 
   const createImageStroke = useCallback((src, imageWidth, imageHeight, x, y, idSeed) => ({
@@ -744,54 +792,78 @@ const WhiteboardPage = () => {
 
       {/* Main Area */}
       <div className="wb-main">
-        {/* Toolbar */}
-        <div className="wb-toolbar">
-          <div className="wb-tool-group">
-            {TOOLS.map(t => (
-              <button
-                key={t.id}
-                className={`wb-tool-btn ${tool === t.id ? 'active' : ''}`}
-                onClick={() => setTool(t.id)}
-                title={t.label}
-              >
-                <span>{t.icon}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="wb-color-grid">
-            {COLORS.map(c => (
-              <button
-                key={c}
-                className={`wb-color-btn ${color === c ? 'active' : ''}`}
-                style={{ background: c, borderColor: c === color ? '#fff' : 'transparent' }}
-                onClick={() => setColor(c)}
-                title={c}
-              />
-            ))}
-            <input type="color" className="wb-color-picker" value={color} onChange={e => setColor(e.target.value)} title="Custom color" />
-          </div>
-
-          <div className="wb-width-group">
-            {STROKE_WIDTHS.map(w => (
-              <button
-                key={w}
-                className={`wb-width-btn ${strokeWidth === w ? 'active' : ''}`}
-                onClick={() => setStrokeWidth(w)}
-                title={`${w}px`}
-              >
-                <div className="wb-width-dot" style={{ width: Math.min(Math.max(w * 2, 4), 18), height: Math.min(Math.max(w * 2, 4), 18), background: color }} />
-              </button>
-            ))}
-          </div>
-
-          <div className="wb-action-group">
-            <button className="wb-action-tool" onClick={handleUndo} title="Undo">↩</button>
-          </div>
-        </div>
-
         {/* Canvas */}
         <div className="wb-canvas-wrap">
+          <div className="wb-toolbar" ref={toolbarRef}>
+            <div className="wb-tool-group">
+              {TOOLS.map(t => (
+                <button
+                  key={t.id}
+                  className={`wb-tool-btn ${tool === t.id ? 'active' : ''}`}
+                  onClick={() => handleToolSelect(t.id)}
+                  title={t.label}
+                >
+                  <span>{t.icon}</span>
+                </button>
+              ))}
+              <button
+                className={`wb-tool-btn ${activePalette === 'color' ? 'active' : ''}`}
+                onClick={() => setActivePalette(prev => prev === 'color' ? null : 'color')}
+                title="Colors"
+              >
+                <span className="wb-tool-swatch" style={{ background: color }} />
+              </button>
+              <button
+                className={`wb-tool-btn ${activePalette === 'size' ? 'active' : ''}`}
+                onClick={() => setActivePalette(prev => prev === 'size' ? null : 'size')}
+                title="Stroke size"
+              >
+                <span className="wb-tool-size-dot" style={{ width: Math.min(Math.max(strokeWidth * 2, 4), 18), height: Math.min(Math.max(strokeWidth * 2, 4), 18), background: color }} />
+              </button>
+              <button className="wb-action-tool" onClick={() => { handleUndo(); setActivePalette(null); }} title="Undo">↩</button>
+            </div>
+
+            {activePalette === 'color' && (
+              <div className="wb-toolbar-popover wb-toolbar-popover-color">
+                <div className="wb-color-grid">
+                  {COLORS.map(c => (
+                    <button
+                      key={c}
+                      className={`wb-color-btn ${color === c ? 'active' : ''}`}
+                      style={{ background: c, borderColor: c === color ? '#fff' : 'transparent' }}
+                      onClick={() => handleColorSelect(c)}
+                      title={c}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    className="wb-color-picker"
+                    value={color}
+                    onChange={e => handleColorSelect(e.target.value)}
+                    title="Custom color"
+                  />
+                </div>
+              </div>
+            )}
+
+            {activePalette === 'size' && (
+              <div className="wb-toolbar-popover wb-toolbar-popover-size">
+                <div className="wb-width-group">
+                  {STROKE_WIDTHS.map(w => (
+                    <button
+                      key={w}
+                      className={`wb-width-btn ${strokeWidth === w ? 'active' : ''}`}
+                      onClick={() => handleStrokeWidthSelect(w)}
+                      title={`${w}px`}
+                    >
+                      <div className="wb-width-dot" style={{ width: Math.min(Math.max(w * 2, 4), 18), height: Math.min(Math.max(w * 2, 4), 18), background: color }} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           <canvas
             ref={canvasRef}
             className="wb-canvas"

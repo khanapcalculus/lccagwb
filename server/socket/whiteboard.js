@@ -2,6 +2,10 @@ const { db } = require('../firebase-admin');
 
 const rooms = new Map(); // roomId -> { participants, strokes }
 const MAX_STROKES = 500;
+const translateStroke = (stroke, dx, dy) => ({
+  ...stroke,
+  points: stroke.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
+});
 
 module.exports = (io) => {
   const whiteboard = io.of('/whiteboard');
@@ -124,14 +128,14 @@ module.exports = (io) => {
       }
     });
 
-    socket.on('move-stroke', ({ stroke }) => {
-      if (!currentRoom || !stroke?.id) return;
+    socket.on('move-stroke', ({ strokeId, dx, dy }) => {
+      if (!currentRoom || !strokeId || (!dx && !dy)) return;
       const room = rooms.get(currentRoom);
       if (room) {
         room.strokes = room.strokes.map((existing) => (
-          existing.id === stroke.id ? stroke : existing
+          existing.id === strokeId ? translateStroke(existing, dx, dy) : existing
         ));
-        socket.to(currentRoom).emit('canvas-redraw', { strokes: room.strokes });
+        socket.to(currentRoom).emit('stroke-moved', { strokeId, dx, dy });
       }
     });
 
