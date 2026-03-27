@@ -124,6 +124,17 @@ module.exports = (io) => {
       }
     });
 
+    socket.on('move-stroke', ({ stroke }) => {
+      if (!currentRoom || !stroke?.id) return;
+      const room = rooms.get(currentRoom);
+      if (room) {
+        room.strokes = room.strokes.map((existing) => (
+          existing.id === stroke.id ? stroke : existing
+        ));
+        socket.to(currentRoom).emit('canvas-redraw', { strokes: room.strokes });
+      }
+    });
+
     // Save canvas to Firestore
     socket.on('save-canvas', async ({ canvasData }) => {
       if (!currentRoom) return;

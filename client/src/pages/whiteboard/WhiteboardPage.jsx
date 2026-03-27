@@ -2,13 +2,17 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { io } from 'socket.io-client';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import './Whiteboard.css';
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:5000';
+GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const TOOLS = [
+  { id: 'select', icon: '⬚', label: 'Select' },
   { id: 'pen', icon: '✏️', label: 'Pen' },
   { id: 'eraser', icon: '⬜', label: 'Eraser' },
   { id: 'line', icon: '╱', label: 'Line' },
@@ -38,6 +42,7 @@ const WhiteboardPage = () => {
   const panState = useRef({ pointer: { x: 0, y: 0 }, offset: { x: 0, y: 0 } });
   const imageCache = useRef(new Map());
   const redrawAllRef = useRef(() => {});
+  const selectionDrag = useRef({ active: false, strokeId: null, origin: null, snapshot: null });
 
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#00d4ff');
@@ -49,9 +54,10 @@ const WhiteboardPage = () => {
   const [textValue, setTextValue] = useState('');
   const [cursors, setCursors] = useState({});
   const [saved, setSaved] = useState(false);
-  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [roomInfo, setRoomInfo] = useState(null);
   const [viewportOffset, setViewportOffset] = useState({ x: 0, y: 0 });
+  const [theme, setTheme] = useState(() => localStorage.getItem('whiteboard-theme') || 'dark');
+  const [selectedStrokeId, setSelectedStrokeId] = useState(null);
 
   // ── Canvas utils ──────────────────────────────────────────────
   const getCtx = () => canvasRef.current?.getContext('2d');
@@ -78,6 +84,10 @@ const WhiteboardPage = () => {
       y: clientY - rect.top - viewportOffset.y,
     };
   };
+
+  useEffect(() => {
+    localStorage.setItem('whiteboard-theme', theme);
+  }, [theme]);
 
   const configureCtx = useCallback((ctx) => {
     const dpr = window.devicePixelRatio || 1;
@@ -134,6 +144,62 @@ const WhiteboardPage = () => {
     const proj = { x: start.x + t * dx, y: start.y + t * dy };
     return Math.hypot(point.x - proj.x, point.y - proj.y);
   };
+
+  const getStrokeBounds = useCallback((stroke) => {
+    if (!stroke?.points?.length) return null;
+
+    if (stroke.tool === 'text' && stroke.text) {
+      const fontSize = (stroke.width || 4) * 4 + 12;
+      const textWidth = stroke.text.length * fontSize * 0.6;
+      return {
+        left: stroke.points[0].x,
+        top: stroke.points[0].y - fontSize,
+        right: stroke.points[0].x + textWidth,
+        bottom: stroke.points[0].y,
+      };
+    }
+
+    if (stroke.tool === 'image') {
+      return {
+        left: stroke.points[0].x,
+        top: stroke.points[0].y,
+        right: stroke.points[0].x + (stroke.imageWidth || 0),
+        bottom: stroke.points[0].y + (stroke.imageHeight || 0),
+      };
+    }
+
+    const xs = stroke.points.map((p) => p.x);
+    const ys = stroke.points.map((p) => p.y);
+    return {
+      left: Math.min(...xs),
+      top: Math.min(...ys),
+      right: Math.max(...xs),
+      bottom: Math.max(...ys),
+    };
+  }, []);
+
+  const translateStroke = useCallback((stroke, dx, dy) => ({
+    ...stroke,
+    points: stroke.points.map((p) => ({ x: p.x + dx, y: p.y + dy })),
+  }), []);
+
+  const drawSelectionOutline = useCallback((ctx, stroke) => {
+    const bounds = getStrokeBounds(stroke);
+    if (!bounds) return;
+    const padding = 8;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = '#00d4ff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(
+      bounds.left - padding,
+      bounds.top - padding,
+      bounds.right - bounds.left + padding * 2,
+      bounds.bottom - bounds.top + padding * 2
+    );
+    ctx.restore();
+  }, [getStrokeBounds]);
 
   const doesStrokeHitPoint = useCallback((stroke, point) => {
     const tolerance = Math.max(10, (stroke.width || 4) * 2);
@@ -239,8 +305,20 @@ const WhiteboardPage = () => {
     configureCtx(ctx);
     ctx.globalCompositeOperation = 'source-over';
     strokes.current.forEach(s => drawStroke(ctx, s));
-  }, [configureCtx, drawStroke]);
+    if (selectedStrokeId) {
+      const selected = strokes.current.find((stroke) => stroke.id === selectedStrokeId);
+      if (selected) drawSelectionOutline(ctx, selected);
+    }
+  }, [configureCtx, drawSelectionOutline, drawStroke, selectedStrokeId]);
   redrawAllRef.current = redrawAll;
+
+  const appendStrokes = useCallback((newStrokes, socketEvent = 'add-shape') => {
+    if (!newStrokes.length) return;
+    strokes.current = [...strokes.current, ...newStrokes];
+    history.current = [...history.current, ...newStrokes];
+    redrawAll();
+    newStrokes.forEach((stroke) => socketRef.current?.emit(socketEvent, stroke));
+  }, [redrawAll]);
 
   // ── Resize canvas ─────────────────────────────────────────────
   useEffect(() => {
@@ -317,6 +395,7 @@ const WhiteboardPage = () => {
     socket.on('canvas-cleared', () => {
       strokes.current = [];
       history.current = [];
+      setSelectedStrokeId(null);
       const ctx = getCtx();
       ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     });
@@ -356,6 +435,23 @@ const WhiteboardPage = () => {
       };
       return;
     }
+    if (tool === 'select') {
+      const pos = getPos(e);
+      const hitStroke = [...strokes.current].reverse().find((stroke) => doesStrokeHitPoint(stroke, pos));
+      setSelectedStrokeId(hitStroke?.id || null);
+      if (hitStroke) {
+        selectionDrag.current = {
+          active: true,
+          strokeId: hitStroke.id,
+          origin: pos,
+          snapshot: hitStroke,
+        };
+      } else {
+        selectionDrag.current = { active: false, strokeId: null, origin: null, snapshot: null };
+      }
+      redrawAll();
+      return;
+    }
     if (tool === 'eraser') {
       const pos = getPos(e);
       const hitStroke = [...strokes.current].reverse().find(stroke => doesStrokeHitPoint(stroke, pos));
@@ -389,6 +485,19 @@ const WhiteboardPage = () => {
         x: panState.current.offset.x + (pointer.x - panState.current.pointer.x),
         y: panState.current.offset.y + (pointer.y - panState.current.pointer.y),
       });
+      return;
+    }
+    if (tool === 'select' && selectionDrag.current.active) {
+      const pos = getPos(e);
+      const dx = pos.x - selectionDrag.current.origin.x;
+      const dy = pos.y - selectionDrag.current.origin.y;
+      strokes.current = strokes.current.map((stroke) => (
+        stroke.id === selectionDrag.current.strokeId
+          ? translateStroke(selectionDrag.current.snapshot, dx, dy)
+          : stroke
+      ));
+      history.current = strokes.current;
+      redrawAll();
       return;
     }
     if (isDirectTouchInput(e)) return;
@@ -427,6 +536,14 @@ const WhiteboardPage = () => {
     }
     if (isPanning.current) {
       isPanning.current = false;
+      return;
+    }
+    if (tool === 'select') {
+      if (selectionDrag.current.active && selectionDrag.current.strokeId) {
+        const movedStroke = strokes.current.find((stroke) => stroke.id === selectionDrag.current.strokeId);
+        if (movedStroke) socketRef.current?.emit('move-stroke', { stroke: movedStroke });
+      }
+      selectionDrag.current = { active: false, strokeId: null, origin: null, snapshot: null };
       return;
     }
     if (!isDrawing.current) return;
@@ -489,13 +606,69 @@ const WhiteboardPage = () => {
     navigator.clipboard.writeText(window.location.href);
   };
 
-  const handleImageButtonClick = () => {
+  const handleAssetButtonClick = () => {
     fileInputRef.current?.click();
   };
 
-  const handleImageUpload = (e) => {
+  const createImageStroke = useCallback((src, imageWidth, imageHeight, x, y, idSeed) => ({
+    tool: 'image',
+    src,
+    imageWidth,
+    imageHeight,
+    points: [{ x, y }],
+    uid: user.uid,
+    id: idSeed,
+  }), [user.uid]);
+
+  const handleAssetUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const canvas = canvasRef.current;
+    const viewportWidth = canvas?.getBoundingClientRect().width || 800;
+    const viewportHeight = canvas?.getBoundingClientRect().height || 600;
+    const centerX = viewportWidth / 2 - viewportOffset.x;
+    const startY = 48 - viewportOffset.y;
+
+    if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+      const bytes = await file.arrayBuffer();
+      const pdf = await getDocument({ data: bytes }).promise;
+
+      if (pdf.numPages > 10) {
+        window.alert('PDF upload is limited to 10 pages.');
+        e.target.value = '';
+        return;
+      }
+
+      const strokesToAdd = [];
+      let currentY = startY;
+      const baseId = Date.now();
+
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const rawViewport = page.getViewport({ scale: 1 });
+        const targetScale = Math.min((viewportWidth * 0.72) / rawViewport.width, (viewportHeight * 0.78) / rawViewport.height, 1.4);
+        const pageViewport = page.getViewport({ scale: targetScale });
+        const renderCanvas = document.createElement('canvas');
+        const renderCtx = renderCanvas.getContext('2d');
+        renderCanvas.width = pageViewport.width;
+        renderCanvas.height = pageViewport.height;
+        await page.render({ canvasContext: renderCtx, viewport: pageViewport }).promise;
+        const src = renderCanvas.toDataURL('image/png');
+        strokesToAdd.push(createImageStroke(
+          src,
+          pageViewport.width,
+          pageViewport.height,
+          centerX - pageViewport.width / 2,
+          currentY,
+          baseId + pageNumber
+        ));
+        currentY += pageViewport.height + 28;
+      }
+
+      appendStrokes(strokesToAdd);
+      e.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -503,32 +676,22 @@ const WhiteboardPage = () => {
       if (typeof src !== 'string') return;
       const img = new Image();
       img.onload = () => {
-        const canvas = canvasRef.current;
-        const viewportWidth = canvas?.getBoundingClientRect().width || 800;
-        const viewportHeight = canvas?.getBoundingClientRect().height || 600;
         const maxWidth = Math.min(420, viewportWidth * 0.6);
         const maxHeight = Math.min(320, viewportHeight * 0.6);
         const scale = Math.min(maxWidth / img.width, maxHeight / img.height, 1);
         const imageWidth = img.width * scale;
         const imageHeight = img.height * scale;
-        const stroke = {
-          tool: 'image',
-          src,
-          imageWidth,
-          imageHeight,
-          points: [{
-            x: (viewportWidth - imageWidth) / 2 - viewportOffset.x,
-            y: (viewportHeight - imageHeight) / 2 - viewportOffset.y,
-          }],
-          uid: user.uid,
-          id: Date.now(),
-        };
         imageCache.current.set(src, img);
-        strokes.current.push(stroke);
-        history.current.push(stroke);
-        redrawAll();
-        socketRef.current?.emit('add-shape', stroke);
-        showTextInput && setShowTextInput(false);
+        appendStrokes([
+          createImageStroke(
+            src,
+            imageWidth,
+            imageHeight,
+            centerX - imageWidth / 2,
+            viewportHeight / 2 - imageHeight / 2 - viewportOffset.y,
+            Date.now()
+          ),
+        ]);
       };
       img.src = src;
     };
@@ -537,7 +700,7 @@ const WhiteboardPage = () => {
   };
 
   return (
-    <div className="wb-container">
+    <div className={`wb-container ${theme === 'light' ? 'light' : 'dark'}`}>
       {/* Top Bar */}
       <div className="wb-topbar">
         <div className="wb-topbar-left">
@@ -567,85 +730,64 @@ const WhiteboardPage = () => {
             ))}
             {participants.length > 4 && <div className="wb-avatar wb-avatar-more">+{participants.length - 4}</div>}
           </div>
-          <button className="wb-action-btn wide" onClick={handleImageButtonClick} title="Upload image">🖼 Upload</button>
-          <button className="wb-action-btn wide danger" onClick={handleClear} title="Clear canvas">🗑 Clear</button>
+          <button className="wb-action-btn" onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+          <button className="wb-action-btn" onClick={handleAssetButtonClick} title="Upload image or PDF">📄</button>
+          <button className="wb-action-btn danger" onClick={handleClear} title="Clear canvas">🗑</button>
           <button className="wb-action-btn" onClick={handleCopyLink} title="Copy link">🔗</button>
           <button className="wb-action-btn" onClick={handleSave} title="Save to cloud">💾</button>
           <button className="wb-action-btn" onClick={handleExport} title="Export PNG">⬇️</button>
-          <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageUpload} />
+          <input ref={fileInputRef} type="file" accept="image/*,.pdf,application/pdf" style={{ display: 'none' }} onChange={handleAssetUpload} />
         </div>
       </div>
 
       {/* Main Area */}
       <div className="wb-main">
         {/* Toolbar */}
-        <div className={`wb-toolbar ${toolbarCollapsed ? 'collapsed' : ''}`}>
-          <button className="wb-toolbar-toggle" onClick={() => setToolbarCollapsed(!toolbarCollapsed)} title="Toggle toolbar">
-            {toolbarCollapsed ? '›' : '‹'}
-          </button>
+        <div className="wb-toolbar">
+          <div className="wb-tool-group">
+            {TOOLS.map(t => (
+              <button
+                key={t.id}
+                className={`wb-tool-btn ${tool === t.id ? 'active' : ''}`}
+                onClick={() => setTool(t.id)}
+                title={t.label}
+              >
+                <span>{t.icon}</span>
+              </button>
+            ))}
+          </div>
 
-          {!toolbarCollapsed && (
-            <>
-              {/* Tools */}
-              <div className="wb-section-label">Tools</div>
-              <div className="wb-tool-group">
-                {TOOLS.map(t => (
-                  <button
-                    key={t.id}
-                    className={`wb-tool-btn ${tool === t.id ? 'active' : ''}`}
-                    onClick={() => setTool(t.id)}
-                    title={t.label}
-                  >
-                    <span>{t.icon}</span>
-                    <span className="wb-tool-label">{t.label}</span>
-                  </button>
-                ))}
-              </div>
+          <div className="wb-color-grid">
+            {COLORS.map(c => (
+              <button
+                key={c}
+                className={`wb-color-btn ${color === c ? 'active' : ''}`}
+                style={{ background: c, borderColor: c === color ? '#fff' : 'transparent' }}
+                onClick={() => setColor(c)}
+                title={c}
+              />
+            ))}
+            <input type="color" className="wb-color-picker" value={color} onChange={e => setColor(e.target.value)} title="Custom color" />
+          </div>
 
-              <div className="wb-divider" />
+          <div className="wb-width-group">
+            {STROKE_WIDTHS.map(w => (
+              <button
+                key={w}
+                className={`wb-width-btn ${strokeWidth === w ? 'active' : ''}`}
+                onClick={() => setStrokeWidth(w)}
+                title={`${w}px`}
+              >
+                <div className="wb-width-dot" style={{ width: Math.min(Math.max(w * 2, 4), 18), height: Math.min(Math.max(w * 2, 4), 18), background: color }} />
+              </button>
+            ))}
+          </div>
 
-              {/* Colors */}
-              <div className="wb-section-label">Color</div>
-              <div className="wb-color-grid">
-                {COLORS.map(c => (
-                  <button
-                    key={c}
-                    className={`wb-color-btn ${color === c ? 'active' : ''}`}
-                    style={{ background: c, borderColor: c === color ? '#fff' : 'transparent' }}
-                    onClick={() => setColor(c)}
-                    title={c}
-                  />
-                ))}
-                <input type="color" className="wb-color-picker" value={color} onChange={e => setColor(e.target.value)} title="Custom color" />
-              </div>
-
-              <div className="wb-divider" />
-
-              {/* Stroke Width */}
-              <div className="wb-section-label">Size</div>
-              <div className="wb-width-group">
-                {STROKE_WIDTHS.map(w => (
-                  <button
-                    key={w}
-                    className={`wb-width-btn ${strokeWidth === w ? 'active' : ''}`}
-                    onClick={() => setStrokeWidth(w)}
-                    title={`${w}px`}
-                  >
-                    <div className="wb-width-dot" style={{ width: Math.min(w, 20), height: Math.min(w, 20), background: color }} />
-                  </button>
-                ))}
-              </div>
-
-              <div className="wb-divider" />
-
-              {/* Actions */}
-              <div className="wb-section-label">Actions</div>
-              <div className="wb-action-group">
-                <button className="wb-action-tool" onClick={handleUndo} title="Undo">↩ Undo</button>
-                <button className="wb-action-tool danger" onClick={handleClear} title="Clear all">🗑 Clear</button>
-              </div>
-            </>
-          )}
+          <div className="wb-action-group">
+            <button className="wb-action-tool" onClick={handleUndo} title="Undo">↩</button>
+          </div>
         </div>
 
         {/* Canvas */}
@@ -658,7 +800,7 @@ const WhiteboardPage = () => {
             onPointerUp={stopDrawing}
             onPointerLeave={stopDrawing}
             onPointerCancel={stopDrawing}
-            style={{ cursor: tool === 'pan' ? (isPanning.current ? 'grabbing' : 'grab') : tool === 'eraser' ? 'not-allowed' : tool === 'text' ? 'text' : 'crosshair' }}
+            style={{ cursor: tool === 'pan' ? (isPanning.current ? 'grabbing' : 'grab') : tool === 'select' ? 'default' : tool === 'eraser' ? 'not-allowed' : tool === 'text' ? 'text' : 'crosshair' }}
           />
 
           {/* Live Cursors */}
