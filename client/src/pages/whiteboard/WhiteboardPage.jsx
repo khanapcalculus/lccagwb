@@ -608,7 +608,7 @@ const WhiteboardPage = () => {
       strokes.current = savedStrokes || [];
       history.current = savedStrokes || [];
       setParticipants(p || []);
-      redrawAll();
+      redrawAllRef.current();
     });
 
     socket.on('user-joined', ({ participants: p }) => setParticipants(p || []));
@@ -634,13 +634,13 @@ const WhiteboardPage = () => {
     socket.on('add-text', (stroke) => {
       strokes.current.push(stroke);
       history.current.push(stroke);
-      redrawAll();
+      redrawAllRef.current();
     });
 
     socket.on('add-shape', (stroke) => {
       strokes.current.push(stroke);
       history.current.push(stroke);
-      redrawAll();
+      redrawAllRef.current();
     });
 
     socket.on('canvas-cleared', () => {
@@ -654,7 +654,7 @@ const WhiteboardPage = () => {
     socket.on('canvas-redraw', ({ strokes: newStrokes }) => {
       strokes.current = newStrokes;
       history.current = newStrokes;
-      redrawAll();
+      redrawAllRef.current();
     });
 
     socket.on('stroke-moved', ({ strokeId, dx, dy }) => {
@@ -663,7 +663,7 @@ const WhiteboardPage = () => {
         stroke.id === strokeId ? translateStroke(stroke, dx, dy) : stroke
       ));
       history.current = strokes.current;
-      redrawAll();
+      redrawAllRef.current();
     });
 
     socket.on('cursor-move', ({ socketId, x, y, name }) => {
@@ -678,7 +678,7 @@ const WhiteboardPage = () => {
     });
 
     return () => { socket.disconnect(); unsub(); };
-  }, [user, roomId, redrawAll, drawStroke]);
+  }, [roomId, user, user?.email, userProfile?.displayName, translateStroke]);
 
   // ── Drawing handlers ──────────────────────────────────────────
   const startDrawing = (e) => {
