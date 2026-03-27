@@ -15,6 +15,7 @@ const TOOLS = [
   { id: 'rect', icon: '▭', label: 'Rectangle' },
   { id: 'circle', icon: '◯', label: 'Circle' },
   { id: 'text', icon: 'T', label: 'Text' },
+  { id: 'pan', icon: '✋', label: 'Pan' },
 ];
 
 const COLORS = ['#00d4ff', '#ffffff', '#a78bfa', '#10b981', '#f59e0b', '#ef4444', '#f97316', '#ec4899', '#000000'];
@@ -29,10 +30,12 @@ const WhiteboardPage = () => {
   const overlayRef = useRef(null);
   const socketRef = useRef(null);
   const isDrawing = useRef(false);
+  const isPanning = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
   const currentStroke = useRef([]);
   const strokes = useRef([]);
   const history = useRef([]);
+  const panState = useRef({ pointer: { x: 0, y: 0 }, offset: { x: 0, y: 0 } });
 
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#00d4ff');
@@ -46,22 +49,30 @@ const WhiteboardPage = () => {
   const [saved, setSaved] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const [roomInfo, setRoomInfo] = useState(null);
+  const [viewportOffset, setViewportOffset] = useState({ x: 0, y: 0 });
 
   // ── Canvas utils ──────────────────────────────────────────────
   const getCtx = () => canvasRef.current?.getContext('2d');
 
+  const getPointerClientPos = (e) => ({
+    x: e.touches ? e.touches[0].clientX : e.clientX,
+    y: e.touches ? e.touches[0].clientY : e.clientY,
+  });
+
   const getPos = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const { x: clientX, y: clientY } = getPointerClientPos(e);
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
+      x: clientX - rect.left - viewportOffset.x,
+      y: clientY - rect.top - viewportOffset.y,
     };
   };
+
+  const configureCtx = useCallback((ctx) => {
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, viewportOffset.x * dpr, viewportOffset.y * dpr);
+  }, [viewportOffset]);
 
   const applyStrokeStyle = (ctx, s) => {
     ctx.strokeStyle = s.color || '#00d4ff';
@@ -102,27 +113,32 @@ const WhiteboardPage = () => {
     const ctx = getCtx();
     const canvas = canvasRef.current;
     if (!ctx || !canvas) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    configureCtx(ctx);
     ctx.globalCompositeOperation = 'source-over';
     strokes.current.forEach(s => drawStroke(ctx, s));
-  }, [drawStroke]);
+  }, [configureCtx, drawStroke]);
 
   // ── Resize canvas ─────────────────────────────────────────────
   useEffect(() => {
     const resize = () => {
       const canvas = canvasRef.current;
       if (!canvas) return;
+      const dpr = window.devicePixelRatio || 1;
       const { width, height } = canvas.getBoundingClientRect();
-      canvas.width = width * window.devicePixelRatio;
-      canvas.height = height * window.devicePixelRatio;
-      const ctx = canvas.getContext('2d');
-      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
       redrawAll();
     };
     resize();
     window.addEventListener('resize', resize);
     return () => window.removeEventListener('resize', resize);
   }, [redrawAll]);
+
+  useEffect(() => {
+    redrawAll();
+  }, [redrawAll, viewportOffset]);
 
   // ── Socket.io connection ──────────────────────────────────────
   useEffect(() => {
@@ -139,6 +155,7 @@ const WhiteboardPage = () => {
 
     socket.on('room-state', ({ strokes: savedStrokes, participants: p }) => {
       strokes.current = savedStrokes || [];
+      history.current = savedStrokes || [];
       setParticipants(p || []);
       redrawAll();
     });
@@ -157,16 +174,21 @@ const WhiteboardPage = () => {
     });
 
     socket.on('draw-end', ({ stroke }) => {
-      if (stroke) { strokes.current.push(stroke); history.current.push(stroke); }
+      if (stroke) {
+        strokes.current.push(stroke);
+        history.current.push(stroke);
+      }
     });
 
     socket.on('add-text', (stroke) => {
       strokes.current.push(stroke);
-      drawStroke(getCtx(), stroke);
+      history.current.push(stroke);
+      redrawAll();
     });
 
     socket.on('add-shape', (stroke) => {
       strokes.current.push(stroke);
+      history.current.push(stroke);
       redrawAll();
     });
 
@@ -179,6 +201,7 @@ const WhiteboardPage = () => {
 
     socket.on('canvas-redraw', ({ strokes: newStrokes }) => {
       strokes.current = newStrokes;
+      history.current = newStrokes;
       redrawAll();
     });
 
@@ -199,6 +222,14 @@ const WhiteboardPage = () => {
   // ── Drawing handlers ──────────────────────────────────────────
   const startDrawing = (e) => {
     e.preventDefault();
+    if (tool === 'pan') {
+      isPanning.current = true;
+      panState.current = {
+        pointer: getPointerClientPos(e),
+        offset: viewportOffset,
+      };
+      return;
+    }
     if (tool === 'text') {
       const pos = getPos(e);
       setTextPos(pos);
@@ -214,6 +245,14 @@ const WhiteboardPage = () => {
 
   const draw = (e) => {
     e.preventDefault();
+    if (isPanning.current) {
+      const pointer = getPointerClientPos(e);
+      setViewportOffset({
+        x: panState.current.offset.x + (pointer.x - panState.current.pointer.x),
+        y: panState.current.offset.y + (pointer.y - panState.current.pointer.y),
+      });
+      return;
+    }
     if (!isDrawing.current) {
       // Send cursor position
       const pos = getPos(e);
@@ -242,6 +281,10 @@ const WhiteboardPage = () => {
   };
 
   const stopDrawing = (e) => {
+    if (isPanning.current) {
+      isPanning.current = false;
+      return;
+    }
     if (!isDrawing.current) return;
     isDrawing.current = false;
     const stroke = { tool, color, width: strokeWidth, points: currentStroke.current, uid: user.uid, id: Date.now() };
@@ -252,6 +295,7 @@ const WhiteboardPage = () => {
       socketRef.current?.emit('draw-end', { stroke });
     } else {
       strokes.current.push(stroke);
+      history.current.push(stroke);
       redrawAll();
       socketRef.current?.emit('add-shape', stroke);
     }
@@ -262,7 +306,8 @@ const WhiteboardPage = () => {
     if (!textValue.trim()) { setShowTextInput(false); return; }
     const stroke = { tool: 'text', color, width: strokeWidth, points: [textPos], text: textValue, uid: user.uid, id: Date.now() };
     strokes.current.push(stroke);
-    drawStroke(getCtx(), stroke);
+    history.current.push(stroke);
+    redrawAll();
     socketRef.current?.emit('add-text', stroke);
     setTextValue('');
     setShowTextInput(false);
@@ -421,12 +466,12 @@ const WhiteboardPage = () => {
             onTouchStart={startDrawing}
             onTouchMove={draw}
             onTouchEnd={stopDrawing}
-            style={{ cursor: tool === 'eraser' ? 'cell' : tool === 'text' ? 'text' : 'crosshair' }}
+            style={{ cursor: tool === 'pan' ? (isPanning.current ? 'grabbing' : 'grab') : tool === 'eraser' ? 'cell' : tool === 'text' ? 'text' : 'crosshair' }}
           />
 
           {/* Live Cursors */}
           {Object.entries(cursors).map(([id, c]) => (
-            <div key={id} className="wb-cursor" style={{ left: c.x, top: c.y }}>
+            <div key={id} className="wb-cursor" style={{ left: c.x + viewportOffset.x, top: c.y + viewportOffset.y }}>
               <div className="wb-cursor-dot" />
               <div className="wb-cursor-name">{c.name}</div>
             </div>
@@ -434,7 +479,7 @@ const WhiteboardPage = () => {
 
           {/* Text Input Overlay */}
           {showTextInput && (
-            <div className="wb-text-input-wrap" style={{ left: textPos.x, top: textPos.y }}>
+            <div className="wb-text-input-wrap" style={{ left: textPos.x + viewportOffset.x, top: textPos.y + viewportOffset.y }}>
               <input
                 autoFocus
                 className="wb-text-input"

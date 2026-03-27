@@ -1,6 +1,7 @@
 const { db } = require('../firebase-admin');
 
 const rooms = new Map(); // roomId -> { participants, strokes }
+const MAX_STROKES = 500;
 
 module.exports = (io) => {
   const whiteboard = io.of('/whiteboard');
@@ -64,7 +65,7 @@ module.exports = (io) => {
       if (room && data.stroke) {
         room.strokes.push(data.stroke);
         // Keep last 500 strokes in memory
-        if (room.strokes.length > 500) room.strokes = room.strokes.slice(-500);
+        if (room.strokes.length > MAX_STROKES) room.strokes = room.strokes.slice(-MAX_STROKES);
       }
       socket.to(currentRoom).emit('draw-end', data);
     });
@@ -81,13 +82,23 @@ module.exports = (io) => {
     // Add text
     socket.on('add-text', (data) => {
       if (!currentRoom) return;
-      whiteboard.to(currentRoom).emit('add-text', data);
+      const room = rooms.get(currentRoom);
+      if (room && data) {
+        room.strokes.push(data);
+        if (room.strokes.length > MAX_STROKES) room.strokes = room.strokes.slice(-MAX_STROKES);
+      }
+      socket.to(currentRoom).emit('add-text', data);
     });
 
     // Add shape
     socket.on('add-shape', (data) => {
       if (!currentRoom) return;
-      whiteboard.to(currentRoom).emit('add-shape', data);
+      const room = rooms.get(currentRoom);
+      if (room && data) {
+        room.strokes.push(data);
+        if (room.strokes.length > MAX_STROKES) room.strokes = room.strokes.slice(-MAX_STROKES);
+      }
+      socket.to(currentRoom).emit('add-shape', data);
     });
 
     // Undo last stroke
