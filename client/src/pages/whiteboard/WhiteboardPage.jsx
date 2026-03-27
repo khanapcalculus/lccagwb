@@ -44,6 +44,12 @@ const WhiteboardPage = () => {
   const imageCache = useRef(new Map());
   const redrawAllRef = useRef(() => {});
   const selectionDrag = useRef({ active: false, strokeId: null, origin: null, snapshot: null, lastDelta: { x: 0, y: 0 } });
+  const viewportOffsetRef = useRef({ x: 0, y: 0 });
+  const pointerClientPosRef = useRef(null);
+  const autoPanRef = useRef({ rafId: null, lastTs: null, vx: 0, vy: 0 });
+  const toolRef = useRef('pen');
+  const colorRef = useRef('#00d4ff');
+  const strokeWidthRef = useRef(2);
 
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#00d4ff');
@@ -87,9 +93,35 @@ const WhiteboardPage = () => {
     };
   };
 
+  const getWorldPosFromClient = useCallback((clientX, clientY) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: clientX - rect.left - viewportOffsetRef.current.x,
+      y: clientY - rect.top - viewportOffsetRef.current.y,
+    };
+  }, []);
+
   useEffect(() => {
     localStorage.setItem('whiteboard-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    viewportOffsetRef.current = viewportOffset;
+  }, [viewportOffset]);
+
+  useEffect(() => {
+    toolRef.current = tool;
+  }, [tool]);
+
+  useEffect(() => {
+    colorRef.current = color;
+  }, [color]);
+
+  useEffect(() => {
+    strokeWidthRef.current = strokeWidth;
+  }, [strokeWidth]);
 
   useEffect(() => {
     const handlePointerDown = (event) => {
@@ -105,6 +137,8 @@ const WhiteboardPage = () => {
   useEffect(() => {
     setActivePalette(null);
   }, [tool]);
+
+  useEffect(() => () => stopAutoPan(), [stopAutoPan]);
 
   const configureCtx = useCallback((ctx) => {
     const dpr = window.devicePixelRatio || 1;
@@ -337,6 +371,152 @@ const WhiteboardPage = () => {
     newStrokes.forEach((stroke) => socketRef.current?.emit(socketEvent, stroke));
   }, [redrawAll]);
 
+  const stopAutoPan = useCallback(() => {
+    if (autoPanRef.current.rafId) {
+      cancelAnimationFrame(autoPanRef.current.rafId);
+    }
+    autoPanRef.current = { rafId: null, lastTs: null, vx: 0, vy: 0 };
+  }, []);
+
+  const applySelectionDragAtPos = useCallback((pos, shouldEmit = true) => {
+    const dx = pos.x - selectionDrag.current.origin.x;
+    const dy = pos.y - selectionDrag.current.origin.y;
+    const deltaDx = dx - selectionDrag.current.lastDelta.x;
+    const deltaDy = dy - selectionDrag.current.lastDelta.y;
+
+    strokes.current = strokes.current.map((stroke) => (
+      stroke.id === selectionDrag.current.strokeId
+        ? translateStroke(selectionDrag.current.snapshot, dx, dy)
+        : stroke
+    ));
+    history.current = strokes.current;
+    selectionDrag.current.lastDelta = { x: dx, y: dy };
+    redrawAll();
+
+    if (shouldEmit && (deltaDx || deltaDy)) {
+      socketRef.current?.emit('move-stroke', {
+        strokeId: selectionDrag.current.strokeId,
+        dx: deltaDx,
+        dy: deltaDy,
+      });
+    }
+  }, [redrawAll, translateStroke]);
+
+  const applyPointerInteraction = useCallback((clientPos, shouldEmit = true) => {
+    if (!clientPos) return;
+    const pos = getWorldPosFromClient(clientPos.x, clientPos.y);
+
+    if (toolRef.current === 'select' && selectionDrag.current.active) {
+      applySelectionDragAtPos(pos, shouldEmit);
+      return;
+    }
+
+    if (!isDrawing.current) return;
+
+    const ctx = getCtx();
+    if (!ctx) return;
+
+    if (toolRef.current === 'pen') {
+      currentStroke.current.push(pos);
+      lastPos.current = pos;
+      redrawAll();
+      applyStrokeStyle(ctx, { color: colorRef.current, width: strokeWidthRef.current, tool: toolRef.current });
+      drawSmoothPath(ctx, currentStroke.current);
+      if (shouldEmit) {
+        socketRef.current?.emit('draw-move', {
+          points: currentStroke.current.slice(-3),
+          color: colorRef.current,
+          width: strokeWidthRef.current,
+          tool: toolRef.current,
+        });
+      }
+      return;
+    }
+
+    redrawAll();
+    const previewStroke = {
+      tool: toolRef.current,
+      color: colorRef.current,
+      width: strokeWidthRef.current,
+      points: [currentStroke.current[0], pos],
+    };
+    if (currentStroke.current.length === 1) currentStroke.current.push(pos);
+    else currentStroke.current[currentStroke.current.length - 1] = pos;
+    drawStroke(ctx, previewStroke);
+  }, [applySelectionDragAtPos, drawSmoothPath, drawStroke, getWorldPosFromClient, redrawAll]);
+
+  const stepAutoPan = useCallback((timestamp) => {
+    const state = autoPanRef.current;
+    if (!state.rafId) return;
+
+    if (state.lastTs == null) {
+      state.lastTs = timestamp;
+      state.rafId = requestAnimationFrame(stepAutoPan);
+      return;
+    }
+
+    const dt = Math.min((timestamp - state.lastTs) / 1000, 0.032);
+    state.lastTs = timestamp;
+
+    if (!state.vx && !state.vy) {
+      stopAutoPan();
+      return;
+    }
+
+    const nextOffset = {
+      x: viewportOffsetRef.current.x + state.vx * dt,
+      y: viewportOffsetRef.current.y + state.vy * dt,
+    };
+    viewportOffsetRef.current = nextOffset;
+    setViewportOffset(nextOffset);
+
+    if (pointerClientPosRef.current) {
+      applyPointerInteraction(pointerClientPosRef.current, true);
+    }
+
+    state.rafId = requestAnimationFrame(stepAutoPan);
+  }, [applyPointerInteraction, stopAutoPan]);
+
+  const updateAutoPanVelocity = useCallback((clientPos) => {
+    const canvas = canvasRef.current;
+    if (!canvas || toolRef.current === 'pan') {
+      stopAutoPan();
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    const threshold = 72;
+    const maxSpeed = 220;
+    let vx = 0;
+    let vy = 0;
+
+    if (clientPos.x - rect.left < threshold) {
+      const intensity = (threshold - (clientPos.x - rect.left)) / threshold;
+      vx = maxSpeed * intensity * intensity;
+    } else if (rect.right - clientPos.x < threshold) {
+      const intensity = (threshold - (rect.right - clientPos.x)) / threshold;
+      vx = -maxSpeed * intensity * intensity;
+    }
+
+    if (clientPos.y - rect.top < threshold) {
+      const intensity = (threshold - (clientPos.y - rect.top)) / threshold;
+      vy = maxSpeed * intensity * intensity;
+    } else if (rect.bottom - clientPos.y < threshold) {
+      const intensity = (threshold - (rect.bottom - clientPos.y)) / threshold;
+      vy = -maxSpeed * intensity * intensity;
+    }
+
+    autoPanRef.current.vx = vx;
+    autoPanRef.current.vy = vy;
+
+    if ((vx || vy) && !autoPanRef.current.rafId) {
+      autoPanRef.current.lastTs = null;
+      autoPanRef.current.rafId = requestAnimationFrame(stepAutoPan);
+    } else if (!vx && !vy) {
+      stopAutoPan();
+    }
+  }, [stepAutoPan, stopAutoPan]);
+
   // ── Resize canvas ─────────────────────────────────────────────
   useEffect(() => {
     const resize = () => {
@@ -453,6 +633,8 @@ const WhiteboardPage = () => {
     if ('pointerId' in e) {
       e.currentTarget.setPointerCapture?.(e.pointerId);
     }
+    pointerClientPosRef.current = getPointerClientPos(e);
+    updateAutoPanVelocity(pointerClientPosRef.current);
     if (tool === 'pan') {
       isPanning.current = true;
       panState.current = {
@@ -492,8 +674,12 @@ const WhiteboardPage = () => {
       return;
     }
     if (tool === 'text') {
+      if (showTextInput && textValue.trim()) {
+        addText();
+      }
       const pos = getPos(e);
       setTextPos(pos);
+      setTextValue('');
       setShowTextInput(true);
       return;
     }
@@ -506,8 +692,10 @@ const WhiteboardPage = () => {
 
   const draw = (e) => {
     e.preventDefault();
+    const pointer = getPointerClientPos(e);
+    pointerClientPosRef.current = pointer;
+    updateAutoPanVelocity(pointer);
     if (isPanning.current) {
-      const pointer = getPointerClientPos(e);
       setViewportOffset({
         x: panState.current.offset.x + (pointer.x - panState.current.pointer.x),
         y: panState.current.offset.y + (pointer.y - panState.current.pointer.y),
@@ -515,62 +703,28 @@ const WhiteboardPage = () => {
       return;
     }
     if (tool === 'select' && selectionDrag.current.active) {
-      const pos = getPos(e);
-      const dx = pos.x - selectionDrag.current.origin.x;
-      const dy = pos.y - selectionDrag.current.origin.y;
-      const deltaDx = dx - selectionDrag.current.lastDelta.x;
-      const deltaDy = dy - selectionDrag.current.lastDelta.y;
-      strokes.current = strokes.current.map((stroke) => (
-        stroke.id === selectionDrag.current.strokeId
-          ? translateStroke(selectionDrag.current.snapshot, dx, dy)
-          : stroke
-      ));
-      history.current = strokes.current;
-      selectionDrag.current.lastDelta = { x: dx, y: dy };
-      redrawAll();
-      if (deltaDx || deltaDy) {
-        socketRef.current?.emit('move-stroke', {
-          strokeId: selectionDrag.current.strokeId,
-          dx: deltaDx,
-          dy: deltaDy,
-        });
-      }
+      applySelectionDragAtPos(getPos(e), true);
       return;
     }
-    if (isDirectTouchInput(e)) return;
+    if (isDirectTouchInput(e)) {
+      stopAutoPan();
+      return;
+    }
     if (!isDrawing.current) {
       // Send cursor position
       const pos = getPos(e);
       socketRef.current?.emit('cursor-move', { x: pos.x, y: pos.y, name: userProfile?.displayName });
       return;
     }
-    const pos = getPos(e);
-    const ctx = getCtx();
-
-    if (tool === 'pen') {
-      currentStroke.current.push(pos);
-      lastPos.current = pos;
-      redrawAll();
-      applyStrokeStyle(ctx, { color, width: strokeWidth, tool });
-      drawSmoothPath(ctx, currentStroke.current);
-      socketRef.current?.emit('draw-move', { points: currentStroke.current.slice(-3), color, width: strokeWidth, tool });
-      return;
-    } else {
-      // For shapes: clear and redraw all, then draw preview
-      redrawAll();
-      const previewStroke = { tool, color, width: strokeWidth, points: [currentStroke.current[0], pos] };
-      drawStroke(ctx, previewStroke);
-    }
-
-    currentStroke.current.push(pos);
-    lastPos.current = pos;
-    socketRef.current?.emit('draw-move', { points: currentStroke.current.slice(-2), color, width: strokeWidth, tool });
+    applyPointerInteraction(pointer, true);
   };
 
   const stopDrawing = (e) => {
     if ('pointerId' in e) {
       e.currentTarget.releasePointerCapture?.(e.pointerId);
     }
+    pointerClientPosRef.current = null;
+    stopAutoPan();
     if (isPanning.current) {
       isPanning.current = false;
       return;
@@ -596,7 +750,7 @@ const WhiteboardPage = () => {
     currentStroke.current = [];
   };
 
-  const addText = () => {
+  const addText = useCallback(() => {
     if (!textValue.trim()) { setShowTextInput(false); return; }
     const stroke = { tool: 'text', color, width: strokeWidth, points: [textPos], text: textValue, uid: user.uid, id: Date.now() };
     strokes.current.push(stroke);
@@ -605,7 +759,7 @@ const WhiteboardPage = () => {
     socketRef.current?.emit('add-text', stroke);
     setTextValue('');
     setShowTextInput(false);
-  };
+  }, [color, redrawAll, roomId, strokeWidth, textPos, textValue, user.uid]);
 
   const handleUndo = () => {
     if (!history.current.length) return;
@@ -756,7 +910,7 @@ const WhiteboardPage = () => {
           <div className="wb-room-info">
             <div className="wb-room-icon">🖊️</div>
             <div>
-              <div className="wb-room-title">{roomInfo ? 'Whiteboard Session' : 'Loading…'}</div>
+              <div className="wb-room-title">Whiteboard Session</div>
               <div className="wb-room-id">Room: {roomId?.slice(0, 8)}…</div>
             </div>
           </div>
@@ -806,62 +960,64 @@ const WhiteboardPage = () => {
                   <span>{t.icon}</span>
                 </button>
               ))}
-              <button
-                className={`wb-tool-btn ${activePalette === 'color' ? 'active' : ''}`}
-                onClick={() => setActivePalette(prev => prev === 'color' ? null : 'color')}
-                title="Colors"
-              >
-                <span className="wb-tool-swatch" style={{ background: color }} />
-              </button>
-              <button
-                className={`wb-tool-btn ${activePalette === 'size' ? 'active' : ''}`}
-                onClick={() => setActivePalette(prev => prev === 'size' ? null : 'size')}
-                title="Stroke size"
-              >
-                <span className="wb-tool-size-dot" style={{ width: Math.min(Math.max(strokeWidth * 2, 4), 18), height: Math.min(Math.max(strokeWidth * 2, 4), 18), background: color }} />
-              </button>
+              <div className="wb-toolbar-anchor">
+                <button
+                  className={`wb-tool-btn ${activePalette === 'color' ? 'active' : ''}`}
+                  onClick={() => setActivePalette(prev => prev === 'color' ? null : 'color')}
+                  title="Colors"
+                >
+                  <span className="wb-tool-swatch" style={{ background: color }} />
+                </button>
+                {activePalette === 'color' && (
+                  <div className="wb-toolbar-popover">
+                    <div className="wb-color-grid">
+                      {COLORS.map(c => (
+                        <button
+                          key={c}
+                          className={`wb-color-btn ${color === c ? 'active' : ''}`}
+                          style={{ background: c, borderColor: c === color ? '#fff' : 'transparent' }}
+                          onClick={() => handleColorSelect(c)}
+                          title={c}
+                        />
+                      ))}
+                      <input
+                        type="color"
+                        className="wb-color-picker"
+                        value={color}
+                        onChange={e => handleColorSelect(e.target.value)}
+                        title="Custom color"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="wb-toolbar-anchor">
+                <button
+                  className={`wb-tool-btn ${activePalette === 'size' ? 'active' : ''}`}
+                  onClick={() => setActivePalette(prev => prev === 'size' ? null : 'size')}
+                  title="Stroke size"
+                >
+                  <span className="wb-tool-size-dot" style={{ width: Math.min(Math.max(strokeWidth * 2, 4), 18), height: Math.min(Math.max(strokeWidth * 2, 4), 18), background: color }} />
+                </button>
+                {activePalette === 'size' && (
+                  <div className="wb-toolbar-popover">
+                    <div className="wb-width-grid">
+                      {STROKE_WIDTHS.map(w => (
+                        <button
+                          key={w}
+                          className={`wb-width-btn ${strokeWidth === w ? 'active' : ''}`}
+                          onClick={() => handleStrokeWidthSelect(w)}
+                          title={`${w}px`}
+                        >
+                          <div className="wb-width-dot" style={{ width: Math.min(Math.max(w * 2, 4), 18), height: Math.min(Math.max(w * 2, 4), 18), background: color }} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
               <button className="wb-action-tool" onClick={() => { handleUndo(); setActivePalette(null); }} title="Undo">↩</button>
             </div>
-
-            {activePalette === 'color' && (
-              <div className="wb-toolbar-popover wb-toolbar-popover-color">
-                <div className="wb-color-grid">
-                  {COLORS.map(c => (
-                    <button
-                      key={c}
-                      className={`wb-color-btn ${color === c ? 'active' : ''}`}
-                      style={{ background: c, borderColor: c === color ? '#fff' : 'transparent' }}
-                      onClick={() => handleColorSelect(c)}
-                      title={c}
-                    />
-                  ))}
-                  <input
-                    type="color"
-                    className="wb-color-picker"
-                    value={color}
-                    onChange={e => handleColorSelect(e.target.value)}
-                    title="Custom color"
-                  />
-                </div>
-              </div>
-            )}
-
-            {activePalette === 'size' && (
-              <div className="wb-toolbar-popover wb-toolbar-popover-size">
-                <div className="wb-width-group">
-                  {STROKE_WIDTHS.map(w => (
-                    <button
-                      key={w}
-                      className={`wb-width-btn ${strokeWidth === w ? 'active' : ''}`}
-                      onClick={() => handleStrokeWidthSelect(w)}
-                      title={`${w}px`}
-                    >
-                      <div className="wb-width-dot" style={{ width: Math.min(Math.max(w * 2, 4), 18), height: Math.min(Math.max(w * 2, 4), 18), background: color }} />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           <canvas
@@ -892,25 +1048,23 @@ const WhiteboardPage = () => {
                 placeholder="Type here…"
                 value={textValue}
                 onChange={e => setTextValue(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') addText(); if (e.key === 'Escape') setShowTextInput(false); }}
+                onBlur={addText}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addText();
+                  }
+                  if (e.key === 'Escape') {
+                    setTextValue('');
+                    setShowTextInput(false);
+                  }
+                }}
                 style={{ color, fontSize: `${strokeWidth * 4 + 12}px` }}
               />
             </div>
           )}
         </div>
 
-        {/* Participants Panel */}
-        <div className="wb-participants-panel">
-          <div className="wb-panel-title">👥 In Room ({participants.length})</div>
-          {participants.map(p => (
-            <div key={p.uid} className="wb-participant">
-              <div className="wb-p-avatar">{p.name?.[0]?.toUpperCase() || '?'}</div>
-              <span>{p.name}</span>
-              {p.uid === user?.uid && <span className="wb-you-badge">You</span>}
-            </div>
-          ))}
-          {!participants.length && <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Connecting…</p>}
-        </div>
       </div>
     </div>
   );

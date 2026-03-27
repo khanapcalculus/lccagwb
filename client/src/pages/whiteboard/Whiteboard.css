@@ -148,6 +148,11 @@
   background: rgba(255,255,255,0.02);
   backdrop-filter: blur(10px);
 }
+.wb-toolbar-anchor {
+  position: relative;
+  display: flex;
+  justify-content: center;
+}
 .wb-tool-btn {
   display: flex; align-items: center; justify-content: center;
   width: 44px; height: 44px;
@@ -177,21 +182,29 @@
 
 .wb-toolbar-popover {
   position: absolute;
-  left: 56px;
-  min-width: 66px;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(156px, calc(100vw - 96px));
   padding: 0.45rem;
   border-radius: 16px;
   background: var(--wb-panel-bg);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-md);
   backdrop-filter: blur(14px);
+  max-height: calc(100vh - 120px);
+  overflow: auto;
 }
-.wb-toolbar-popover-color { top: 360px; }
-.wb-toolbar-popover-size { top: 412px; }
 
-.wb-color-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 0 0.1rem; }
+.wb-color-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0;
+}
 .wb-color-btn {
-  width: 24px; height: 24px;
+  width: 100%;
+  aspect-ratio: 1;
   border-radius: 6px;
   cursor: pointer;
   border: 2px solid transparent;
@@ -199,12 +212,17 @@
 }
 .wb-color-btn.active { border-color: white; transform: scale(1.15); box-shadow: 0 0 8px rgba(255,255,255,0.3); }
 .wb-color-btn:hover { transform: scale(1.1); }
-.wb-color-picker { width: 24px; height: 24px; border-radius: 6px; border: none; cursor: pointer; padding: 0; background: none; }
+.wb-color-picker { width: 100%; aspect-ratio: 1; border-radius: 6px; border: none; cursor: pointer; padding: 0; background: none; }
 
-.wb-width-group { display: flex; flex-direction: column; gap: 0.25rem; }
+.wb-width-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
 .wb-width-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 44px; height: 38px;
+  width: 100%;
+  aspect-ratio: 1;
   border-radius: var(--radius-sm);
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--border);
@@ -274,13 +292,14 @@
 /* ── Text Input ───────────────────────────────────────────────── */
 .wb-text-input-wrap { position: absolute; z-index: 100; }
 .wb-text-input {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid var(--cyan);
+  background: var(--wb-panel-bg);
+  border: 1px solid var(--border-bright);
   outline: none;
   font-family: 'Inter', sans-serif;
   min-width: 120px;
-  padding: 2px 4px;
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
 }
 
 /* ── Participants Panel ───────────────────────────────────────── */
@@ -342,8 +361,9 @@
 @media (max-width: 768px) {
   .wb-participants-panel { display: none; }
   .wb-toolbar { top: 12px; left: 12px; }
-  .wb-toolbar-popover { left: 52px; }
-  .wb-toolbar-popover-color { top: 352px; }
-  .wb-toolbar-popover-size { top: 404px; }
+  .wb-toolbar-popover {
+    left: calc(100% + 8px);
+    width: min(150px, calc(100vw - 84px));
+  }
   .wb-room-id { display: none; }
 }
