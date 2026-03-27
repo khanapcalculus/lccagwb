@@ -28,12 +28,12 @@ const TutorDashboard = () => {
       setLoading(false);
     });
 
-    const qStudents = query(collection(db, 'users'), where('role', '==', 'student'));
+    // Query only students assigned to this tutor so it stays compatible with Firestore rules.
+    const qStudents = query(collection(db, 'users'), where('assignedTutorId', '==', user.uid));
     const unsubStudents = onSnapshot(qStudents, snap => {
-      // Filter locally to avoid needing a complex composite index for role+assignedTutorId right now
       const myStudents = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(s => s.assignedTutorId === user.uid);
+        .filter(s => s.role === 'student');
       setStudents(myStudents);
     });
 

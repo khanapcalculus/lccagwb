@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { collection, onSnapshot, query, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -24,6 +25,15 @@ const AdminDashboard = () => {
   const [stats, setStats] = useState({ users: [], sessions: [], activities: [] });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
+  const [savingId, setSavingId] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [studentToAssign, setStudentToAssign] = useState(null);
+
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, 'users'), snap => {
@@ -47,14 +57,24 @@ const AdminDashboard = () => {
   const completed = sessions.filter(s => s.status === 'completed').length;
   const cancelled = sessions.filter(s => s.status === 'cancelled').length;
 
-  const availableTutors = users.filter(u => u.role?.toLowerCase().trim() === 'tutor');
+  const availableTutors = users.filter(u => u.role?.toLowerCase()?.trim() === 'tutor');
 
   const handleAssignTutor = async (studentId, tutorId) => {
+    setSavingId(studentId);
     try {
-      await updateDoc(doc(db, 'users', studentId), { assignedTutorId: tutorId || null });
+      const tutor = availableTutors.find(t => t.id === tutorId);
+      await updateDoc(doc(db, 'users', studentId), { 
+        assignedTutorId: tutorId || null,
+        assignedTutorName: tutor ? (tutor.displayName || tutor.email) : null
+      });
+      showToast('Tutor assigned successfully!');
+      setIsPickerOpen(false);
+      setStudentToAssign(null);
     } catch (error) {
       console.error('Error assigning tutor:', error);
-      alert('Failed to assign tutor');
+      showToast('Failed to assign tutor: ' + error.message, 'error');
+    } finally {
+      setSavingId(null);
     }
   };
 
@@ -111,6 +131,15 @@ const AdminDashboard = () => {
 
   return (
     <div className="page-container animate-fade">
+      {/* Toast Notification */}
+      {toast && (
+        <div className="toast-container" style={{ position: 'fixed', top: '20px', right: '20px', zIndex: 9999 }}>
+          <div className={`toast toast-${toast.type}`} style={{ background: toast.type === 'error' ? '#ef4444' : '#10b981', padding: '12px 24px', borderRadius: '8px', color: 'white', fontWeight: 'bold', boxShadow: '0 4px 12px rgba(0,0,0,0.3)' }}>
+            {toast.msg}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="dashboard-header">
         <div>
@@ -172,7 +201,7 @@ const AdminDashboard = () => {
       {activeTab === 'users' && (
         <div className="card">
           <div className="section-header">
-            <div className="section-title">All Users ({users.length})</div>
+            <div className="section-title">All Users ({users.length}) | Tutors in state: {availableTutors.length}</div>
           </div>
           <div className="table-wrapper">
             <table>
@@ -188,19 +217,25 @@ const AdminDashboard = () => {
                     <td>{u.createdAt?.toDate ? u.createdAt.toDate().toLocaleDateString() : '—'}</td>
                     <td>
                       {u.role?.toLowerCase() === 'student' ? (
-                        <select 
-                          className="form-input" 
-                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem', background: '#1a1f3c', color: '#ffffff', borderColor: '#3b426e' }}
-                          value={u.assignedTutorId || ''}
-                          onChange={(e) => handleAssignTutor(u.id, e.target.value)}
-                        >
-                          <option value="" style={{ color: '#ffffff' }}>Unassigned</option>
-                          {availableTutors.map(tutor => (
-                            <option key={tutor.id} value={tutor.id} style={{ color: '#ffffff', fontWeight: 'bold' }}>
-                              {tutor.displayName ? tutor.displayName : tutor.email ? tutor.email : 'Unnamed Tutor'}
-                            </option>
-                          ))}
-                        </select>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button 
+                            className="btn btn-secondary btn-sm"
+                            style={{ 
+                              background: u.assignedTutorId ? 'rgba(0, 212, 255, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                              borderColor: u.assignedTutorId ? 'var(--cyan)' : 'var(--border)',
+                              color: u.assignedTutorId ? 'var(--cyan)' : 'white'
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              console.log('Button clicked for student:', u.id);
+                              // alert('Click detected for student: ' + (u.displayName || u.email));
+                              setStudentToAssign(u);
+                              setIsPickerOpen(true);
+                            }}
+                          >
+                            {u.assignedTutorId ? `👤 ${u.assignedTutorName || 'Assigned'}` : '➕ Assign Tutor'}
+                          </button>
+                        </div>
                       ) : '—'}
                     </td>
                   </tr>
@@ -254,6 +289,68 @@ const AdminDashboard = () => {
           </div>
           <ActivityFeed activities={activities} maxHeight="600px" />
         </div>
+      )}
+      {/* Tutor Picker Modal using Portal */}
+      {isPickerOpen && studentToAssign && createPortal(
+        <div className="modal-overlay" style={{ zIndex: 10000 }} onClick={() => { setIsPickerOpen(false); setStudentToAssign(null); }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px', position: 'relative', zIndex: 10001 }}>
+            <div className="modal-header">
+              <h3 className="modal-title">🤝 Assign Tutor</h3>
+              <button className="btn-icon" onClick={() => { setIsPickerOpen(false); setStudentToAssign(null); }}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginBottom: '1rem', fontSize: '0.9rem' }}>
+                Select a tutor for <strong style={{color: 'var(--cyan)'}}>{studentToAssign.displayName || studentToAssign.email}</strong>
+              </p>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <button 
+                  className="btn btn-secondary" 
+                  style={{ justifyContent: 'flex-start', borderStyle: 'dashed' }}
+                  onClick={() => handleAssignTutor(studentToAssign.id, '')}
+                  disabled={savingId === studentToAssign.id}
+                >
+                  ⭕ Unassign Current Tutor
+                </button>
+
+                <div className="divider-text" style={{ margin: '0.5rem 0' }}>Available Tutors ({availableTutors.length})</div>
+
+                {availableTutors.map(tutor => (
+                  <button 
+                    key={tutor.id}
+                    className="btn btn-secondary"
+                    style={{ 
+                      justifyContent: 'flex-start',
+                      borderColor: studentToAssign.assignedTutorId === tutor.id ? 'var(--cyan)' : 'var(--border)',
+                      background: studentToAssign.assignedTutorId === tutor.id ? 'rgba(0, 212, 255, 0.05)' : 'rgba(255, 255, 255, 0.03)'
+                    }}
+                    onClick={() => handleAssignTutor(studentToAssign.id, tutor.id)}
+                    disabled={savingId === studentToAssign.id}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%' }}>
+                      <div className="stat-icon cyan" style={{ width: '32px', height: '32px', fontSize: '1rem' }}>👨‍🏫</div>
+                      <div style={{ textAlign: 'left' }}>
+                        <div style={{ fontWeight: '600', color: 'white' }}>{tutor.displayName || 'No Name'}</div>
+                        <div style={{ fontSize: '0.75rem', opacity: 0.6 }}>{tutor.email}</div>
+                      </div>
+                      {studentToAssign.assignedTutorId === tutor.id && (
+                        <div style={{ marginLeft: 'auto', color: 'var(--cyan)' }}>✓</div>
+                      )}
+                    </div>
+                  </button>
+                ))}
+
+                {availableTutors.length === 0 && (
+                  <p style={{ textAlign: 'center', padding: '1rem', opacity: 0.5 }}>No tutors found in database.</p>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => { setIsPickerOpen(false); setStudentToAssign(null); }}>Cancel</button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );
