@@ -73,7 +73,11 @@ const WhiteboardPage = () => {
             onPointerUp={actions.stopDrawing}
           />
 
-          <WhiteboardCursors cursors={state.cursors} viewportOffset={state.viewportOffset} />
+          <WhiteboardCursors
+            cursors={state.cursors}
+            viewportOffset={state.viewportOffset}
+            zoom={state.zoom}
+          />
 
           <WhiteboardHistoryPanel
             open={state.historyOpen}
@@ -86,6 +90,7 @@ const WhiteboardPage = () => {
             show={state.showTextInput}
             textPos={state.textPos}
             viewportOffset={state.viewportOffset}
+            zoom={state.zoom}
             textValue={state.textValue}
             color={state.color}
             strokeWidth={state.strokeWidth}

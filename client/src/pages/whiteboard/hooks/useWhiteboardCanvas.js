@@ -69,7 +69,8 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
   const configureCtx = useCallback((ctx) => {
     const dpr = window.devicePixelRatio || 1;
     const viewportOffset = viewportApiRef.current?.refs.viewportOffsetRef.current || { x: 0, y: 0 };
-    ctx.setTransform(dpr, 0, 0, dpr, viewportOffset.x * dpr, viewportOffset.y * dpr);
+    const zoom = viewportApiRef.current?.refs.zoomRef.current || 1;
+    ctx.setTransform(zoom * dpr, 0, 0, zoom * dpr, viewportOffset.x * dpr, viewportOffset.y * dpr);
   }, []);
 
   const redrawAll = useCallback(() => {
@@ -269,6 +270,7 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
 
   const startDrawing = useCallback((event) => {
     event.preventDefault();
+    if (viewport.helpers.handleTouchGestureStart(event)) return;
     if (viewport.helpers.isDirectTouchInput(event) && tool !== 'pan') return;
 
     if ('pointerId' in event) {
@@ -276,6 +278,9 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
     }
 
     viewport.refs.pointerClientPosRef.current = viewport.helpers.getPointerClientPos(event);
+    if (tool === 'pen') {
+      viewport.helpers.beginAutoPanSession();
+    }
     viewport.helpers.updateAutoPanVelocity(viewport.refs.pointerClientPosRef.current);
 
     if (tool === 'pan') {
@@ -347,6 +352,7 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
 
   const draw = useCallback((event) => {
     event.preventDefault();
+    if (viewport.helpers.handleTouchGestureMove(event)) return;
     const pointer = viewport.helpers.getPointerClientPos(event);
     viewport.refs.pointerClientPosRef.current = pointer;
     viewport.helpers.updateAutoPanVelocity(pointer);
@@ -390,17 +396,42 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
       return;
     }
 
+    if (tool === 'pen') {
+      const nativeEvent = event.nativeEvent || event;
+      const samples = typeof nativeEvent.getCoalescedEvents === 'function'
+        ? nativeEvent.getCoalescedEvents()
+        : [nativeEvent];
+      const sampledPoints = samples
+        .map((sample) => viewport.helpers.getWorldPosFromClient(sample.clientX, sample.clientY))
+        .filter((sample) => Number.isFinite(sample.x) && Number.isFinite(sample.y));
+
+      updatePenStroke({
+        points: sampledPoints.length ? sampledPoints : [advancedPos],
+        currentStroke,
+        lastPos,
+        redrawAll,
+        getCtx,
+        colorRef,
+        strokeWidthRef,
+        toolRef,
+        socketRef,
+        shouldEmit: true,
+      });
+      return;
+    }
+
     applyPointerInteraction(pointer, true);
   }, [advancedShapes.actions, applyPointerInteraction, applySelectionDragAtPos, redrawAll, snap.actions, tool, userProfile?.displayName, viewport.actions, viewport.helpers, viewport.refs]);
 
   const stopDrawing = useCallback((event) => {
+    if (viewport.helpers.handleTouchGestureEnd(event)) return;
     if ('pointerId' in event) {
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     }
 
     viewport.refs.pointerClientPosRef.current = null;
     snap.actions.clearPreview();
-    viewport.helpers.stopAutoPan();
+    viewport.helpers.endAutoPanSession();
 
     if (stopPan({ isPanning })) return;
 
@@ -446,6 +477,7 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
       cursors,
       saved,
       viewportOffset: viewport.state.viewportOffset,
+      zoom: viewport.state.zoom,
       theme: viewport.state.theme,
       activePalette: viewport.state.activePalette,
       snapEnabled: snap.state.snapEnabled,

@@ -4,6 +4,7 @@ const WhiteboardTextInput = ({
   show,
   textPos,
   viewportOffset,
+  zoom = 1,
   textValue,
   color,
   strokeWidth,
@@ -14,7 +15,13 @@ const WhiteboardTextInput = ({
   if (!show) return null;
 
   return (
-    <div className="wb-text-input-wrap" style={{ left: textPos.x + viewportOffset.x, top: textPos.y + viewportOffset.y }}>
+    <div
+      className="wb-text-input-wrap"
+      style={{
+        left: textPos.x * zoom + viewportOffset.x,
+        top: textPos.y * zoom + viewportOffset.y,
+      }}
+    >
       <input
         autoFocus
         className="wb-text-input"
@@ -31,7 +38,7 @@ const WhiteboardTextInput = ({
             onCancel();
           }
         }}
-        style={{ color, fontSize: `${strokeWidth * 4 + 12}px` }}
+        style={{ color, fontSize: `${(strokeWidth * 4 + 12) * zoom}px` }}
       />
     </div>
   );
