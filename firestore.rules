@@ -67,6 +67,11 @@ service cloud.firestore {
       allow create: if isTutor() || isAdmin();
       allow update: if isSignedIn(); // participants can save canvas state
       allow delete: if isAdmin();
+
+      match /versions/{versionId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+      }
     }
 
     // ── Activities collection ─────────────────────────────────

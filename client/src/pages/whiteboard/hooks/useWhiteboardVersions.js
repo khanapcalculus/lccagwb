@@ -13,9 +13,16 @@ export const useWhiteboardVersions = ({ roomId, socketRef }) => {
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribe = onSnapshot(versionsQuery, (snapshot) => {
-      setVersions(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
-    });
+    const unsubscribe = onSnapshot(
+      versionsQuery,
+      (snapshot) => {
+        setVersions(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
+      },
+      (error) => {
+        console.error('Failed to subscribe to whiteboard versions:', error);
+        setVersions([]);
+      }
+    );
 
     return () => unsubscribe();
   }, [roomId]);

@@ -96,6 +96,12 @@ export const useWhiteboardViewport = ({
 
   useEffect(() => () => stopAutoPan(), [stopAutoPan]);
 
+  useEffect(() => {
+    if (tool !== 'pen') {
+      stopAutoPan();
+    }
+  }, [stopAutoPan, tool]);
+
   const stepAutoPan = useCallback((timestamp) => {
     const state = autoPanRef.current;
     if (!state.rafId) return;
@@ -148,7 +154,7 @@ export const useWhiteboardViewport = ({
 
   const updateAutoPanVelocity = useCallback((clientPos) => {
     const canvas = canvasRef.current;
-    if (!canvas || tool === 'pan') {
+    if (!canvas || tool !== 'pen') {
       stopAutoPan();
       return;
     }
