@@ -69,9 +69,9 @@ const SessionCard = ({ session, onJoin, onComplete, onCancel, showActions = true
 
       {showActions && (
         <div className="session-card-actions">
-          {status === 'scheduled' && whiteboardRoomId && (
+          {status !== 'cancelled' && whiteboardRoomId && (
             <button className="btn btn-primary btn-sm" onClick={handleJoinWhiteboard}>
-              🖊️ Open Whiteboard
+              {status === 'completed' ? '📚 Review Whiteboard' : '🖊️ Open Whiteboard'}
             </button>
           )}
           {onComplete && status === 'scheduled' && (

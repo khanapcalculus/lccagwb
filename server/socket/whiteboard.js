@@ -7,6 +7,62 @@ const translateStroke = (stroke, dx, dy) => ({
   points: stroke.points.map((point) => ({ x: point.x + dx, y: point.y + dy })),
 });
 
+const createVersionSnapshot = async (roomId, canvasData, meta = {}) => {
+  if (!roomId) return;
+  try {
+    await db.collection('whiteboards').doc(roomId).collection('versions').add({
+      roomId,
+      canvasData: canvasData || [],
+      strokeCount: canvasData?.length || 0,
+      source: meta.source || 'manual-save',
+      label: meta.label || null,
+      createdAt: new Date(),
+      createdBy: meta.user || null,
+    });
+  } catch (error) {
+    console.error('Failed to create whiteboard version:', error.message);
+  }
+};
+
+const persistRoomState = async (roomId, room) => {
+  if (!roomId || !room) return;
+  try {
+    await db.collection('whiteboards').doc(roomId).set({
+      roomId,
+      canvasData: room.strokes || [],
+      strokeCount: room.strokes?.length || 0,
+      participants: (room.participants || []).map((participant) => ({
+        uid: participant.uid,
+        name: participant.name,
+      })),
+      lastSaved: new Date(),
+      updatedAt: new Date(),
+    }, { merge: true });
+  } catch (error) {
+    console.error('Failed to persist whiteboard state:', error.message);
+  }
+};
+
+const loadExistingWhiteboard = async (roomId) => {
+  const canonicalDoc = await db.collection('whiteboards').doc(roomId).get();
+  if (canonicalDoc.exists) {
+    return { id: canonicalDoc.id, data: canonicalDoc.data() };
+  }
+
+  const fallbackQuery = await db.collection('whiteboards').where('roomId', '==', roomId).limit(1).get();
+  if (fallbackQuery.empty) return null;
+
+  const legacyDoc = fallbackQuery.docs[0];
+  const legacyData = legacyDoc.data();
+  await db.collection('whiteboards').doc(roomId).set({
+    ...legacyData,
+    roomId,
+    migratedFrom: legacyDoc.id,
+    updatedAt: new Date(),
+  }, { merge: true });
+  return { id: roomId, data: legacyData };
+};
+
 module.exports = (io) => {
   const whiteboard = io.of('/whiteboard');
 
@@ -24,9 +80,9 @@ module.exports = (io) => {
         rooms.set(roomId, { participants: [], strokes: [] });
         // Load saved canvas from Firestore
         try {
-          const doc = await db.collection('whiteboards').doc(roomId).get();
-          if (doc.exists && doc.data().canvasData) {
-            rooms.get(roomId).strokes = doc.data().canvasData || [];
+          const existingWhiteboard = await loadExistingWhiteboard(roomId);
+          if (existingWhiteboard?.data?.canvasData) {
+            rooms.get(roomId).strokes = existingWhiteboard.data.canvasData || [];
           }
         } catch (e) { /* ignore */ }
       }
@@ -37,9 +93,11 @@ module.exports = (io) => {
       room.participants.push(participant);
 
       // Update Firestore participants
-      db.collection('whiteboards').doc(roomId).update({
+      db.collection('whiteboards').doc(roomId).set({
+        roomId,
         participants: room.participants.map(p => ({ uid: p.uid, name: p.name })),
-      }).catch(() => {});
+        updatedAt: new Date(),
+      }, { merge: true }).catch(() => {});
 
       // Send current state to new joiner
       socket.emit('room-state', {
@@ -70,6 +128,7 @@ module.exports = (io) => {
         room.strokes.push(data.stroke);
         // Keep last 500 strokes in memory
         if (room.strokes.length > MAX_STROKES) room.strokes = room.strokes.slice(-MAX_STROKES);
+        persistRoomState(currentRoom, room);
       }
       socket.to(currentRoom).emit('draw-end', data);
     });
@@ -79,7 +138,7 @@ module.exports = (io) => {
       if (!currentRoom) return;
       const room = rooms.get(currentRoom);
       if (room) room.strokes = [];
-      db.collection('whiteboards').doc(currentRoom).update({ canvasData: [] }).catch(() => {});
+      persistRoomState(currentRoom, room);
       whiteboard.to(currentRoom).emit('canvas-cleared');
     });
 
@@ -90,6 +149,7 @@ module.exports = (io) => {
       if (room && data) {
         room.strokes.push(data);
         if (room.strokes.length > MAX_STROKES) room.strokes = room.strokes.slice(-MAX_STROKES);
+        persistRoomState(currentRoom, room);
       }
       socket.to(currentRoom).emit('add-text', data);
     });
@@ -101,6 +161,7 @@ module.exports = (io) => {
       if (room && data) {
         room.strokes.push(data);
         if (room.strokes.length > MAX_STROKES) room.strokes = room.strokes.slice(-MAX_STROKES);
+        persistRoomState(currentRoom, room);
       }
       socket.to(currentRoom).emit('add-shape', data);
     });
@@ -115,6 +176,7 @@ module.exports = (io) => {
         if (idx !== -1) {
           room.strokes.splice(room.strokes.length - 1 - idx, 1);
         }
+        persistRoomState(currentRoom, room);
         whiteboard.to(currentRoom).emit('canvas-redraw', { strokes: room.strokes });
       }
     });
@@ -124,6 +186,7 @@ module.exports = (io) => {
       const room = rooms.get(currentRoom);
       if (room) {
         room.strokes = room.strokes.filter(stroke => stroke.id !== strokeId);
+        persistRoomState(currentRoom, room);
         whiteboard.to(currentRoom).emit('canvas-redraw', { strokes: room.strokes });
       }
     });
@@ -135,6 +198,7 @@ module.exports = (io) => {
         room.strokes = room.strokes.map((existing) => (
           existing.id === strokeId ? translateStroke(existing, dx, dy) : existing
         ));
+        persistRoomState(currentRoom, room);
         socket.to(currentRoom).emit('stroke-moved', { strokeId, dx, dy });
       }
     });
@@ -143,10 +207,42 @@ module.exports = (io) => {
     socket.on('save-canvas', async ({ canvasData }) => {
       if (!currentRoom) return;
       try {
-        await db.collection('whiteboards').doc(currentRoom).update({ canvasData, lastSaved: new Date() });
+        await db.collection('whiteboards').doc(currentRoom).set({
+          roomId: currentRoom,
+          canvasData,
+          strokeCount: canvasData?.length || 0,
+          lastSaved: new Date(),
+          updatedAt: new Date(),
+        }, { merge: true });
+        await createVersionSnapshot(currentRoom, canvasData, {
+          source: 'manual-save',
+          user: currentUser?.uid || null,
+        });
         socket.emit('save-success');
       } catch (e) {
         socket.emit('save-error', { message: e.message });
+      }
+    });
+
+    socket.on('load-version', async ({ versionId }) => {
+      if (!currentRoom || !versionId) return;
+      try {
+        const versionDoc = await db.collection('whiteboards').doc(currentRoom).collection('versions').doc(versionId).get();
+        if (!versionDoc.exists) {
+          socket.emit('save-error', { message: 'Version not found.' });
+          return;
+        }
+        const versionData = versionDoc.data();
+        const room = rooms.get(currentRoom);
+        if (room) {
+          room.strokes = versionData.canvasData || [];
+          await persistRoomState(currentRoom, room);
+          whiteboard.to(currentRoom).emit('canvas-redraw', { strokes: room.strokes });
+          socket.emit('canvas-redraw', { strokes: room.strokes });
+          socket.emit('save-success');
+        }
+      } catch (error) {
+        socket.emit('save-error', { message: error.message });
       }
     });
 
@@ -162,6 +258,7 @@ module.exports = (io) => {
       const room = rooms.get(currentRoom);
       if (room) {
         room.participants = room.participants.filter(p => p.socketId !== socket.id);
+        persistRoomState(currentRoom, room);
         whiteboard.to(currentRoom).emit('user-left', {
           uid: currentUser.uid,
           socketId: socket.id,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, where, orderBy, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, orderBy, addDoc, doc, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import SessionCard from '../../components/SessionCard';
@@ -51,7 +51,7 @@ const TutorDashboard = () => {
     e.preventDefault();
     try {
       const roomId = uuidv4();
-      await addDoc(collection(db, 'sessions'), {
+      const sessionRef = await addDoc(collection(db, 'sessions'), {
         tutorId: user.uid,
         tutorName: userProfile?.displayName || user.email,
         studentId: form.studentId,
@@ -65,9 +65,22 @@ const TutorDashboard = () => {
         whiteboardUrl: `/whiteboard/${roomId}`,
         createdAt: serverTimestamp(),
       });
-      await addDoc(collection(db, 'whiteboards'), {
-        roomId, tutorId: user.uid, studentId: form.studentId,
-        canvasData: null, participants: [], createdAt: serverTimestamp(),
+      await setDoc(doc(db, 'whiteboards', roomId), {
+        roomId,
+        sessionId: sessionRef.id,
+        tutorId: user.uid,
+        tutorName: userProfile?.displayName || user.email,
+        studentId: form.studentId,
+        studentName: form.studentName,
+        title: form.title,
+        description: form.description,
+        scheduledAt: form.scheduledAt,
+        status: 'scheduled',
+        canvasData: [],
+        strokeCount: 0,
+        participants: [],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
       await addDoc(collection(db, 'activities'), {
         type: 'session_created', userId: user.uid,
@@ -82,12 +95,27 @@ const TutorDashboard = () => {
   };
 
   const handleComplete = async (id) => {
+    const session = sessions.find(s => s.id === id);
     await updateDoc(doc(db, 'sessions', id), { status: 'completed' });
+    if (session?.whiteboardRoomId) {
+      await setDoc(doc(db, 'whiteboards', session.whiteboardRoomId), {
+        status: 'completed',
+        completedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
     showToast('Session marked as complete!');
   };
 
   const handleCancel = async (id) => {
+    const session = sessions.find(s => s.id === id);
     await updateDoc(doc(db, 'sessions', id), { status: 'cancelled' });
+    if (session?.whiteboardRoomId) {
+      await setDoc(doc(db, 'whiteboards', session.whiteboardRoomId), {
+        status: 'cancelled',
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
     showToast('Session cancelled.', 'error');
   };
 

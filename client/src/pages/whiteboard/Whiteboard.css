@@ -117,6 +117,7 @@
   display: flex; align-items: center; justify-content: center;
 }
 .wb-action-btn:hover { background: var(--cyan-glow); border-color: var(--border-bright); }
+.wb-action-btn.active { background: rgba(0,212,255,0.1); border-color: rgba(0,212,255,0.35); color: var(--cyan); }
 .wb-action-btn.danger:hover {
   background: rgba(239,68,68,0.12);
   border-color: rgba(239,68,68,0.35);
@@ -300,6 +301,76 @@
   padding: 0.45rem 0.6rem;
   border-radius: 10px;
   box-shadow: var(--shadow-md);
+}
+
+/* ── History Panel ────────────────────────────────────────────── */
+.wb-history-panel {
+  position: absolute;
+  top: 72px;
+  right: 16px;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(420px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: var(--wb-panel-bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(14px);
+  z-index: 90;
+  overflow: hidden;
+}
+.wb-history-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.wb-history-title { font-weight: 700; color: var(--text-primary); }
+.wb-history-subtitle { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem; }
+.wb-history-close {
+  width: 30px; height: 30px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.wb-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  overflow: auto;
+}
+.wb-history-item {
+  text-align: left;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.wb-history-item:hover {
+  border-color: var(--border-bright);
+  background: rgba(0,212,255,0.06);
+}
+.wb-history-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.wb-history-item-title { color: var(--text-primary); font-weight: 600; text-transform: capitalize; }
+.wb-history-item-count { color: var(--text-secondary); font-size: 0.72rem; }
+.wb-history-item-meta { color: var(--text-muted); font-size: 0.72rem; margin-top: 0.35rem; }
+.wb-history-empty {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  padding: 1rem 0.25rem;
 }
 
 /* ── Participants Panel ───────────────────────────────────────── */
