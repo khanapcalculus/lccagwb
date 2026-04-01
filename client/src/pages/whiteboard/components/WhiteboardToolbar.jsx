@@ -21,6 +21,11 @@ const WhiteboardToolbar = ({
   const primaryTools = tools.filter((item) => !SHAPE_TOOL_IDS.includes(item.id));
   const activeShapeTool = shapeTools.find((item) => item.id === tool) || shapeTools[0];
   const shapeButtonTitle = activeShapeTool ? `Shapes: ${activeShapeTool.label}` : 'Shapes';
+  const handlePalettePress = (event, palette) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onTogglePalette(palette);
+  };
 
   return (
     <div className="wb-toolbar" ref={toolbarRef}>
@@ -38,18 +43,20 @@ const WhiteboardToolbar = ({
 
         <div className="wb-toolbar-anchor">
           <button
+            type="button"
             className={`wb-tool-btn ${activePalette === 'shape' || SHAPE_TOOL_IDS.includes(tool) ? 'active' : ''}`}
-            onClick={() => onTogglePalette('shape')}
+            onPointerDown={(event) => handlePalettePress(event, 'shape')}
             title={shapeButtonTitle}
           >
             <span>{activeShapeTool?.icon || '◇'}</span>
           </button>
           {activePalette === 'shape' && (
-            <div className="wb-toolbar-popover">
+            <div className="wb-toolbar-popover" onPointerDown={(event) => event.stopPropagation()}>
               <div className="wb-shape-grid">
                 {shapeTools.map((item) => (
                   <button
                     key={item.id}
+                    type="button"
                     className={`wb-shape-btn ${tool === item.id ? 'active' : ''}`}
                     onClick={() => onToolSelect(item.id)}
                     title={item.label}
@@ -64,18 +71,20 @@ const WhiteboardToolbar = ({
 
         <div className="wb-toolbar-anchor">
           <button
+            type="button"
             className={`wb-tool-btn ${activePalette === 'color' ? 'active' : ''}`}
-            onClick={() => onTogglePalette('color')}
+            onPointerDown={(event) => handlePalettePress(event, 'color')}
             title="Colors"
           >
             <span className="wb-tool-swatch" style={{ background: color }} />
           </button>
           {activePalette === 'color' && (
-            <div className="wb-toolbar-popover">
+            <div className="wb-toolbar-popover" onPointerDown={(event) => event.stopPropagation()}>
               <div className="wb-color-grid">
                 {colors.map((value) => (
                   <button
                     key={value}
+                    type="button"
                     className={`wb-color-btn ${color === value ? 'active' : ''}`}
                     style={{ background: value, borderColor: value === color ? '#fff' : 'transparent' }}
                     onClick={() => onColorSelect(value)}
@@ -96,8 +105,9 @@ const WhiteboardToolbar = ({
 
         <div className="wb-toolbar-anchor">
           <button
+            type="button"
             className={`wb-tool-btn ${activePalette === 'size' ? 'active' : ''}`}
-            onClick={() => onTogglePalette('size')}
+            onPointerDown={(event) => handlePalettePress(event, 'size')}
             title="Stroke size"
           >
             <span
@@ -110,11 +120,12 @@ const WhiteboardToolbar = ({
             />
           </button>
           {activePalette === 'size' && (
-            <div className="wb-toolbar-popover">
+            <div className="wb-toolbar-popover" onPointerDown={(event) => event.stopPropagation()}>
               <div className="wb-width-grid">
                 {strokeWidths.map((value) => (
                   <button
                     key={value}
+                    type="button"
                     className={`wb-width-btn ${strokeWidth === value ? 'active' : ''}`}
                     onClick={() => onStrokeWidthSelect(value)}
                     title={`${value}px`}
@@ -134,7 +145,7 @@ const WhiteboardToolbar = ({
           )}
         </div>
 
-        <button className="wb-action-tool" onClick={onUndo} title="Undo">↩</button>
+        <button type="button" className="wb-action-tool" onClick={onUndo} title="Undo">↩</button>
       </div>
     </div>
   );

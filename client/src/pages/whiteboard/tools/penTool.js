@@ -28,6 +28,7 @@ export const updatePenStroke = ({
 
   if (!dedupedPoints.length) return;
 
+  const previousPoint = currentStroke.current[currentStroke.current.length - 1] || null;
   currentStroke.current.push(...dedupedPoints);
   lastPos.current = dedupedPoints[dedupedPoints.length - 1];
   redrawAll();
@@ -39,8 +40,9 @@ export const updatePenStroke = ({
   drawSmoothPath(ctx, currentStroke.current);
 
   if (shouldEmit) {
+    const segmentPoints = previousPoint ? [previousPoint, ...dedupedPoints] : dedupedPoints;
     socketRef.current?.emit('draw-move', {
-      points: currentStroke.current.slice(-2),
+      points: segmentPoints,
       color: colorRef.current,
       width: strokeWidthRef.current,
       tool: toolRef.current,

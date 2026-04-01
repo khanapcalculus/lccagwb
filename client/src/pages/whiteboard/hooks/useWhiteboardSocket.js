@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { SERVER_URL } from '../config';
+import { drawSmoothPath } from '../utils/strokeUtils';
 
 export const useWhiteboardSocket = ({
   roomId,
@@ -70,12 +71,9 @@ export const useWhiteboardSocket = ({
 
     socket.on('draw-move', ({ points, color, width, tool }) => {
       const ctx = getCtx();
-      if (!ctx || points.length < 2) return;
+      if (!ctx || !points?.length) return;
       applyStrokeStyle(ctx, { color, width, tool });
-      ctx.beginPath();
-      ctx.moveTo(points[points.length - 2].x, points[points.length - 2].y);
-      ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
-      ctx.stroke();
+      drawSmoothPath(ctx, points);
     });
 
     socket.on('draw-end', ({ stroke }) => {
