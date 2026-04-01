@@ -35,6 +35,9 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
   const panState = useRef({ pointer: { x: 0, y: 0 }, offset: { x: 0, y: 0 } });
   const imageCache = useRef(new Map());
   const redrawAllRef = useRef(() => {});
+  const viewportApiRef = useRef(null);
+  const snapApiRef = useRef(null);
+  const advancedShapesApiRef = useRef(null);
   const selectionDrag = useRef({ active: false, strokeId: null, origin: null, snapshot: null, lastDelta: { x: 0, y: 0 } });
   const toolRef = useRef('pen');
   const colorRef = useRef(COLORS[0]);
@@ -65,7 +68,8 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
 
   const configureCtx = useCallback((ctx) => {
     const dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, viewport.refs.viewportOffsetRef.current.x * dpr, viewport.refs.viewportOffsetRef.current.y * dpr);
+    const viewportOffset = viewportApiRef.current?.refs.viewportOffsetRef.current || { x: 0, y: 0 };
+    ctx.setTransform(dpr, 0, 0, dpr, viewportOffset.x * dpr, viewportOffset.y * dpr);
   }, []);
 
   const redrawAll = useCallback(() => {
@@ -78,8 +82,8 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
     configureCtx(ctx);
     ctx.globalCompositeOperation = 'source-over';
     strokes.current.forEach((stroke) => drawStroke(ctx, stroke, imageCache, () => redrawAllRef.current()));
-    snap.drawPreview(ctx);
-    advancedShapes.drawPreview(ctx);
+    snapApiRef.current?.drawPreview(ctx);
+    advancedShapesApiRef.current?.drawPreview(ctx);
     if (selectedStrokeId) {
       const selected = strokes.current.find((stroke) => stroke.id === selectedStrokeId);
       if (selected) drawSelectionOutline(ctx, selected);
@@ -121,10 +125,14 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
 
   const applyPointerInteraction = useCallback((clientPos, shouldEmit = true) => {
     if (!clientPos) return;
-    const rawPos = viewport.helpers.getWorldPosFromClient(clientPos.x, clientPos.y);
+    const viewportApi = viewportApiRef.current;
+    const snapApi = snapApiRef.current;
+    if (!viewportApi) return;
+
+    const rawPos = viewportApi.helpers.getWorldPosFromClient(clientPos.x, clientPos.y);
     const pos = toolRef.current === 'pen'
       ? rawPos
-      : snap.actions.getSnappedPos(rawPos);
+      : (snapApi?.actions.getSnappedPos(rawPos) || rawPos);
 
     if (toolRef.current === 'select' && selectionDrag.current.active) {
       applySelectionDragAtPos(pos, shouldEmit);
@@ -160,7 +168,7 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
       imageCache,
       redrawAllRef,
     });
-  }, [applySelectionDragAtPos, getCtx, redrawAll, snap.actions, viewport.helpers]);
+  }, [applySelectionDragAtPos, getCtx, redrawAll]);
 
   const viewport = useWhiteboardViewport({
     canvasRef,
@@ -205,6 +213,10 @@ export const useWhiteboardCanvas = ({ roomId, user, userProfile }) => {
     appendStrokes,
     redrawAll,
   });
+
+  viewportApiRef.current = viewport;
+  snapApiRef.current = snap;
+  advancedShapesApiRef.current = advancedShapes;
 
   const versions = useWhiteboardVersions({
     roomId,
